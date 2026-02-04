@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Lazy forms</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top-bar">
+    <div class="top-bar-left">
+      <h1 class="top-bar-title">Lazy forms</h1>
+      <p id="subtitle" class="subtitle">Stored values for this page / field</p>
+    </div>
+    <button type="button" id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
+      <svg class="icon icon-cog" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="panel-content">
+    <div id="main-view" class="main-view">
+      <div class="toolbar">
+        <div class="view-tabs" role="tablist" aria-label="Lazy forms view">
+          <button type="button" id="view-this-page" class="view-tab" role="tab" aria-selected="true">Matching</button>
+          <button type="button" id="view-all" class="view-tab" role="tab" aria-selected="false">All values</button>
+        </div>
+        <button type="button" id="add-value-btn" class="btn-add">Add value</button>
+      </div>
+
+      <div id="add-section" class="add-section hidden"></div>
+
+      <ul id="matching-list" class="entries-list"></ul>
+      <p id="empty-state" class="empty-state hidden">No stored values match. Add one or use the context menu.</p>
+    </div>
+
+    <div id="settings-view" class="settings-view hidden">
+    <h2 class="settings-title">Settings</h2>
+    <div class="settings-actions">
+      <button type="button" id="export-btn" class="btn-settings">Export JSON</button>
+      <button type="button" id="import-btn" class="btn-settings">Import JSON</button>
+    </div>
+    <button type="button" id="settings-back-btn" class="btn-back">
+      <svg class="btn-back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      Back
+    </button>
+    </div>
+  </div>
+
+  <footer class="panel-footer">
+    <button type="button" id="close-panel-btn" class="btn-close">Close</button>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

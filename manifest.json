@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Lazy forms",
+  "version": "1.0.0",
+  "description": "Context-aware storage for form field values (input, textarea, select). Right-click to store or apply values.",
+  "permissions": ["storage", "contextMenus", "scripting", "sidePanel"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Lazy forms"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
