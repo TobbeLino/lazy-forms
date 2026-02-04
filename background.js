@@ -438,6 +438,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Content script: request field-specific matches for current element (used by inline field button)
+  if (message.type === 'getFieldMatches' && sender.tab?.id) {
+    (async () => {
+      const tabId = sender.tab.id;
+      let pageInfo = null;
+      if (message.pageInfo) {
+        pageInfo = {
+          url: message.pageInfo.url,
+          origin: message.pageInfo.origin,
+          pathname: message.pageInfo.pathname,
+          selector: message.pageInfo.selector || '',
+        };
+      } else {
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab?.url) pageInfo = pageInfoFromUrl(tab.url);
+      }
+
+      if (!pageInfo) {
+        sendResponse?.({ ok: false, error: 'No pageInfo' });
+        return;
+      }
+
+      const { entries } = await loadStorage();
+      const allMatches = getMatchingEntries(entries, pageInfo);
+
+      // Only keep field-specific matches: explicit fieldOnly, or urlPattern rules
+      // that are selector-based (selector-only or origin|pathname|selector).
+      const fieldMatches = allMatches.filter((e) => {
+        if (e.contextType === 'fieldOnly') return true;
+        if (e.contextType === 'urlPattern') {
+          const key = (e.contextKey || '').trim();
+          if (!key) return false;
+          if (!key.includes('://') && !key.includes('|')) return true; // selector-only
+          const parts = key.split('|');
+          return parts.length === 3 && parts[2] && parts[2] !== '*';
+        }
+        return false;
+      });
+
+      sendResponse?.({ ok: true, entries: fieldMatches });
+    })();
+    return true; // async
+  }
+
   // Content script: user hovered/focused on a field - predictive update
   // Use cached entries for speed (this happens frequently)
   if (message.type === 'fieldHovered' && sender.tab?.id) {

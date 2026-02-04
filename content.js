@@ -66,6 +66,125 @@ let lastContextMenuY = 0;
 let fieldTrackingEnabled = false;
 let lastHoveredSelector = null;
 
+// Inline field button for showing matches
+const FIELD_BUTTON_ID = 'lazy-forms-field-button';
+let fieldButtonTarget = null;
+let fieldButtonResizeObserver = null;
+
+function positionFieldButton() {
+  const btn = document.getElementById(FIELD_BUTTON_ID);
+  if (!btn || !fieldButtonTarget) return;
+  const rect = fieldButtonTarget.getBoundingClientRect();
+  if (!rect || rect.width === 0 || rect.height === 0) {
+    btn.style.display = 'none';
+    return;
+  }
+  const size = 18;
+  const top = rect.top + (rect.height - size) / 2;
+  // Align right edge of button with right edge of field (was: rect.right - size/2)
+  const left = rect.right - size;
+  btn.style.display = 'flex';
+  btn.style.top = `${Math.max(0, top)}px`;
+  btn.style.left = `${Math.max(0, left)}px`;
+}
+
+function hideFieldButton() {
+  if (fieldButtonResizeObserver) {
+    fieldButtonResizeObserver.disconnect();
+    fieldButtonResizeObserver = null;
+  }
+  const btn = document.getElementById(FIELD_BUTTON_ID);
+  if (btn) {
+    btn.remove();
+  }
+  fieldButtonTarget = null;
+}
+
+function startFieldButtonResizeObserving(el) {
+  if (fieldButtonResizeObserver) fieldButtonResizeObserver.disconnect();
+  const scheduleReposition = () => {
+    if (fieldButtonTarget) positionFieldButton();
+  };
+  fieldButtonResizeObserver = new ResizeObserver(() => scheduleReposition());
+  fieldButtonResizeObserver.observe(el);
+  if (el.parentElement && el.parentElement !== document.body) {
+    fieldButtonResizeObserver.observe(el.parentElement);
+  }
+}
+
+function ensureFieldButton(el) {
+  fieldButtonTarget = el;
+  let btn = document.getElementById(FIELD_BUTTON_ID);
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = FIELD_BUTTON_ID;
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Show lazy forms values');
+    btn.textContent = '≡';
+    btn.style.position = 'fixed';
+    btn.style.zIndex = '2147483647';
+    btn.style.width = '18px';
+    btn.style.height = '18px';
+    btn.style.borderRadius = '50%';
+    btn.style.border = 'none';
+    btn.style.padding = '0';
+    btn.style.margin = '0';
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'center';
+    btn.style.cursor = 'pointer';
+    btn.style.background = '#4a9eff';
+    btn.style.color = '#fff';
+    btn.style.fontSize = '11px';
+    btn.style.lineHeight = '1';
+    btn.style.boxShadow = '0 0 0 1px #fff, 0 2px 4px rgba(0,0,0,0.2)';
+
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = fieldButtonTarget;
+      if (!target) return;
+      lastRightClickedElement = target;
+      const selector = getStableSelector(target);
+      const rect = target.getBoundingClientRect();
+      const position = { x: rect.right, y: rect.bottom };
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'getFieldMatches',
+            pageInfo: {
+              url: location.href,
+              origin: location.origin,
+              pathname: location.pathname,
+              selector,
+            },
+          },
+          (reply) => {
+            if (!reply || !reply.ok) return;
+            const entries = reply.entries || [];
+            showFloatingMenu(entries, position);
+          }
+        ).catch?.(() => {});
+      } catch {
+        // ignore errors (e.g. extension context invalidated)
+      }
+    });
+
+    document.body.appendChild(btn);
+  }
+  startFieldButtonResizeObserving(el);
+  positionFieldButton();
+}
+
+window.addEventListener(
+  'scroll',
+  () => {
+    if (fieldButtonTarget) positionFieldButton();
+  },
+  true
+);
+window.addEventListener('resize', positionFieldButton);
+
 document.addEventListener(
   'contextmenu',
   (e) => {
@@ -240,15 +359,42 @@ function onFieldInteraction(e) {
 
   // Notify background to update context menu and sidepanel
   try {
-    chrome.runtime.sendMessage({
-      type: 'fieldHovered',
-      pageInfo: {
-        url: location.href,
-        origin: location.origin,
-        pathname: location.pathname,
-        selector,
+    chrome.runtime
+      .sendMessage({
+        type: 'fieldHovered',
+        pageInfo: {
+          url: location.href,
+          origin: location.origin,
+          pathname: location.pathname,
+          selector,
+        },
+      })
+      .catch(() => {});
+
+    // Ask background if this field has specific matches; if so, show inline button.
+    chrome.runtime.sendMessage(
+      {
+        type: 'getFieldMatches',
+        pageInfo: {
+          url: location.href,
+          origin: location.origin,
+          pathname: location.pathname,
+          selector,
+        },
       },
-    }).catch(() => {});
+      (reply) => {
+        if (!reply || !reply.ok) {
+          hideFieldButton();
+          return;
+        }
+        const entries = reply.entries || [];
+        if (entries.length > 0) {
+          ensureFieldButton(el);
+        } else if (fieldButtonTarget === el) {
+          hideFieldButton();
+        }
+      }
+    );
   } catch (err) {
     if (!String(err?.message || '').includes('Extension context invalidated')) {
       console.warn('[Lazy forms] sendMessage failed', err);
