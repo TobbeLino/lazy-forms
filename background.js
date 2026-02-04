@@ -23,7 +23,7 @@ const PENDING_STORE_KEY = 'lazy-forms-pendingStore';
 const activeTabState = {};
 
 // Quick slot entry IDs (for root menu items)
-const MAX_QUICK_SLOTS = 5;
+const MAX_QUICK_SLOTS = 10;
 const quickSlots = Array(MAX_QUICK_SLOTS).fill(null);
 
 // Entries cache for fast field-hover updates (avoids storage read on every interaction)
