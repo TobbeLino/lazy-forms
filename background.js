@@ -84,10 +84,67 @@ function matchesContext(entry, pageInfo) {
     case 'fieldOnly': {
       if (!selector) return false;
       const key = (entry.contextKey || '').trim();
-      // Full key (origin|pathname|selector) → match this field on this page only
-      if (key === `${origin}|${pathname}|${selector}`) return true;
+      if (!key) return false;
+
+      // Support wildcards for full keys: origin|pathname|selector
+      if (key.includes('|')) {
+        const parts = key.split('|');
+        if (parts.length === 3) {
+          const [keyOrigin, keyPathname, keySelector] = parts;
+
+          // Origin must match exactly
+          if (keyOrigin === origin) {
+            // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
+            let pathnameMatches = false;
+            if (!keyPathname || keyPathname === '*') {
+              pathnameMatches = true;
+            } else if (keyPathname.includes('*') || keyPathname.includes('?')) {
+              try {
+                pathnameMatches = globToRegex(keyPathname).test(pathname);
+              } catch {
+                pathnameMatches = false;
+              }
+            } else {
+              pathnameMatches = keyPathname === pathname;
+            }
+
+            if (pathnameMatches) {
+              // Selector: support '*' / '?' wildcards; empty or '*' means "any selector"
+              let selectorMatches = false;
+              if (!keySelector || keySelector === '*') {
+                selectorMatches = true;
+              } else if (keySelector.includes('*') || keySelector.includes('?')) {
+                try {
+                  selectorMatches = globToRegex(keySelector).test(selector);
+                } catch {
+                  selectorMatches = false;
+                }
+              } else {
+                selectorMatches = keySelector === selector;
+              }
+
+              if (selectorMatches) return true;
+            }
+          }
+        } else {
+          // Fallback for unexpected key shapes: keep old exact-match behavior
+          if (key === `${origin}|${pathname}|${selector}`) return true;
+        }
+        return false;
+      }
+
       // Selector-only (e.g. #searchOverlayInput) → match this field on any site
-      if (!key.includes('|') && !key.includes('://') && key !== '' && selector === key) return true;
+      // Now with optional '*' / '?' wildcards.
+      if (!key.includes('://')) {
+        if (key.includes('*') || key.includes('?')) {
+          try {
+            return globToRegex(key).test(selector);
+          } catch {
+            return false;
+          }
+        }
+        return selector === key;
+      }
       return false;
     }
     case 'url':
@@ -216,14 +273,43 @@ function hasFieldEntriesForPage(entries, pageInfo) {
   if (!pageInfo) return false;
   const prefix = `${pageInfo.origin}|${pageInfo.pathname}|`;
   return entries.some((e) => {
-    if (e.contextType !== 'fieldOnly') return false;
     const key = (e.contextKey || '').trim();
     if (!key) return false;
-    // Page-specific field: origin|pathname|selector must start with this page's origin+pathname
-    if (key.includes('|')) return key.startsWith(prefix);
-    // Selector-only field (e.g. #id): can match on any site, so enable tracking
-    // so we can react to focus/hover on matching fields.
-    if (!key.includes('://')) return true;
+
+    // 1) Explicit field-only entries
+    if (e.contextType === 'fieldOnly') {
+      // Page-specific field: origin|pathname|selector must start with this page's origin+pathname
+      if (key.includes('|')) return key.startsWith(prefix);
+      // Selector-only field (e.g. #id): can match on any site, so enable tracking
+      // so we can react to focus/hover on matching fields.
+      if (!key.includes('://')) return true;
+      return false;
+    }
+
+    // 2) urlPattern entries that could match a field on this page
+    if (e.contextType === 'urlPattern') {
+      // a) selector-only pattern (no '|' and no scheme) – can match fields on any site
+      if (!key.includes('|') && !key.includes('://')) return true;
+
+      // b) origin|pathname|selector – origin must match; pathname can be exact or glob
+      const parts = key.split('|');
+      if (parts.length >= 2) {
+        const [keyOrigin, keyPathname] = parts;
+        if (keyOrigin !== pageInfo.origin) return false;
+
+        // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
+        if (!keyPathname || keyPathname === '*') return true;
+        if (keyPathname.includes('*') || keyPathname.includes('?')) {
+          try {
+            return globToRegex(keyPathname).test(pageInfo.pathname);
+          } catch {
+            return false;
+          }
+        }
+        return keyPathname === pageInfo.pathname;
+      }
+    }
+
     return false;
   });
 }

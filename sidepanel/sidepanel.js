@@ -320,7 +320,9 @@ async function doRender(state) {
   if (!list || !empty) return;
 
   if (subtitle) {
-    subtitle.textContent = showAllValues ? 'All values' : 'Stored values for this page / field';
+    subtitle.textContent = showAllValues
+      ? 'All stored lazy values'
+      : 'Stored lazy values for this page / field';
   }
 
   const pendingStore = await getPendingStore();
@@ -335,9 +337,9 @@ async function doRender(state) {
 
   if (!entriesToShow.length) {
     empty.classList.remove('hidden');
-    empty.textContent = showAllValues
-      ? 'No lazy forms values yet.<br>Add one or use the context menu.'
-      : 'No lazy forms values match.<br>Add one or use the context menu.';
+    empty.innerHTML = showAllValues
+      ? 'No lazy values yet.<br>Add one or use the context menu.'
+      : 'No lazy values match.<br>Add one or use the context menu.';
     return;
   }
   empty.classList.add('hidden');
