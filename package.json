@@ -1,0 +1,25 @@
+{
+  "name": "lazy-forms",
+  "version": "1.0.0",
+  "description": "Context-aware storage for form field values (input, textarea, select). Right-click to store or apply values.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "chrome-extension",
+    "forms",
+    "autofill",
+    "browser-extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.39.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
