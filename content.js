@@ -70,8 +70,11 @@ let lastHoveredSelector = null;
 const FIELD_BUTTON_ID = 'lazy-forms-field-button';
 let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
+/** When true, do not reposition the icon (e.g. while user has mouse down on it, so Jira spinner can't steal the click). */
+let fieldButtonPositionFrozen = false;
 
 function positionFieldButton() {
+  if (fieldButtonPositionFrozen) return;
   const btn = document.getElementById(FIELD_BUTTON_ID);
   if (!btn || !fieldButtonTarget) return;
   const rect = fieldButtonTarget.getBoundingClientRect();
@@ -139,6 +142,12 @@ function ensureFieldButton(el) {
     btn.style.lineHeight = '1';
     btn.style.boxShadow = '0 0 0 1px #fff, 0 2px 4px rgba(0,0,0,0.2)';
 
+    // Freeze position on mousedown so sites (e.g. Jira) that change layout on click don't move the icon before click fires
+    btn.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      fieldButtonPositionFrozen = true;
+    });
+
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -184,6 +193,19 @@ window.addEventListener(
   true
 );
 window.addEventListener('resize', positionFieldButton);
+
+// Unfreeze icon position on mouseup (anywhere) so we can reposition again; then snap icon to current field rect
+document.addEventListener(
+  'mouseup',
+  () => {
+    if (!fieldButtonPositionFrozen) return;
+    fieldButtonPositionFrozen = false;
+    requestAnimationFrame(() => {
+      positionFieldButton();
+    });
+  },
+  true
+);
 
 document.addEventListener(
   'contextmenu',
