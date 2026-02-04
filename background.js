@@ -100,11 +100,46 @@ function matchesContext(entry, pageInfo) {
       const key = entry.contextKey || '';
       const parts = key.split('|');
 
-      // 1) origin|pathname|selector → match that field on that page only
+      // 1) origin|pathname|selector → origin and pathname can be exact or glob; selector can be exact or glob
+      // Examples:
+      //   https://puzzel.atlassian.net|*|#react-select-3-input
+      //   https://puzzel.atlassian.net|/some/path|#react-select-*-input
       if (parts.length === 3 && selector) {
         const [keyOrigin, keyPathname, keySelector] = parts;
-        if (keyOrigin === origin && keyPathname === pathname && keySelector === selector) {
-          return true;
+
+        // Origin must match exactly (no globbing here)
+        if (keyOrigin === origin) {
+          // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
+          let pathnameMatches = false;
+          if (!keyPathname || keyPathname === '*') {
+            pathnameMatches = true;
+          } else if (keyPathname.includes('*') || keyPathname.includes('?')) {
+            try {
+              pathnameMatches = globToRegex(keyPathname).test(pathname);
+            } catch {
+              pathnameMatches = false;
+            }
+          } else {
+            pathnameMatches = keyPathname === pathname;
+          }
+
+          if (pathnameMatches) {
+            // Selector: support '*' / '?' wildcards
+            let selectorMatches = false;
+            if (!keySelector || keySelector === '*') {
+              selectorMatches = true;
+            } else if (keySelector.includes('*') || keySelector.includes('?')) {
+              try {
+                selectorMatches = globToRegex(keySelector).test(selector);
+              } catch {
+                selectorMatches = false;
+              }
+            } else {
+              selectorMatches = keySelector === selector;
+            }
+
+            if (selectorMatches) return true;
+          }
         }
       }
 
