@@ -194,15 +194,20 @@ window.addEventListener(
 );
 window.addEventListener('resize', positionFieldButton);
 
-// Unfreeze icon position on mouseup (anywhere) so we can reposition again; then snap icon to current field rect
+// Unfreeze icon position on mouseup. Only reposition if the release was *not* on our button –
+// otherwise Jira (etc.) may have changed layout and getBoundingClientRect() is wrong, sending the icon far right.
 document.addEventListener(
   'mouseup',
-  () => {
+  (e) => {
     if (!fieldButtonPositionFrozen) return;
     fieldButtonPositionFrozen = false;
-    requestAnimationFrame(() => {
-      positionFieldButton();
-    });
+    const btn = document.getElementById(FIELD_BUTTON_ID);
+    const releasedOnOurButton = btn && (e.target === btn || btn.contains(e.target));
+    if (!releasedOnOurButton) {
+      requestAnimationFrame(() => {
+        positionFieldButton();
+      });
+    }
   },
   true
 );
