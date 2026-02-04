@@ -266,47 +266,58 @@ function updateQuickSlots(matches) {
 // ============ CORE REFRESH FUNCTION ============
 
 /**
- * Check if there are any fieldOnly entries that could match this page.
- * Used to decide whether to enable predictive field tracking.
+ * Check if there are any field-only (or field-specific urlPattern) entries that could match this page.
+ * Used to decide whether to enable predictive field tracking and thus the inline field icon.
  */
 function hasFieldEntriesForPage(entries, pageInfo) {
   if (!pageInfo) return false;
-  const prefix = `${pageInfo.origin}|${pageInfo.pathname}|`;
+  const { origin, pathname } = pageInfo;
+
+  function pathnameCouldMatch(keyPathname) {
+    if (!keyPathname || keyPathname === '*') return true;
+    if (keyPathname.includes('*') || keyPathname.includes('?')) {
+      try {
+        return globToRegex(keyPathname).test(pathname);
+      } catch {
+        return false;
+      }
+    }
+    return keyPathname === pathname;
+  }
+
   return entries.some((e) => {
     const key = (e.contextKey || '').trim();
     if (!key) return false;
 
-    // 1) Explicit field-only entries
+    // 1) fieldOnly entries
     if (e.contextType === 'fieldOnly') {
-      // Page-specific field: origin|pathname|selector must start with this page's origin+pathname
-      if (key.includes('|')) return key.startsWith(prefix);
-      // Selector-only field (e.g. #id): can match on any site, so enable tracking
-      // so we can react to focus/hover on matching fields.
-      if (!key.includes('://')) return true;
+      // Selector-only (e.g. #id): can match on any site → enable tracking
+      if (!key.includes('://') && !key.includes('|')) return true;
+
+      // origin|pathname|selector: enable if origin + pathname could match (with wildcards)
+      if (key.includes('|')) {
+        const parts = key.split('|');
+        if (parts.length >= 2) {
+          const [keyOrigin, keyPathname] = parts;
+          if (keyOrigin !== origin) return false;
+          return pathnameCouldMatch(keyPathname);
+        }
+        // legacy: exact prefix match
+        const prefix = `${origin}|${pathname}|`;
+        return key.startsWith(prefix);
+      }
       return false;
     }
 
     // 2) urlPattern entries that could match a field on this page
     if (e.contextType === 'urlPattern') {
-      // a) selector-only pattern (no '|' and no scheme) – can match fields on any site
       if (!key.includes('|') && !key.includes('://')) return true;
 
-      // b) origin|pathname|selector – origin must match; pathname can be exact or glob
       const parts = key.split('|');
       if (parts.length >= 2) {
         const [keyOrigin, keyPathname] = parts;
-        if (keyOrigin !== pageInfo.origin) return false;
-
-        // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
-        if (!keyPathname || keyPathname === '*') return true;
-        if (keyPathname.includes('*') || keyPathname.includes('?')) {
-          try {
-            return globToRegex(keyPathname).test(pageInfo.pathname);
-          } catch {
-            return false;
-          }
-        }
-        return keyPathname === pageInfo.pathname;
+        if (keyOrigin !== origin) return false;
+        return pathnameCouldMatch(keyPathname);
       }
     }
 
