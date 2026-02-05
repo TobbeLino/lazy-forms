@@ -150,12 +150,6 @@ button {
 
 .btn-close {
   padding: 6px 12px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
-  color: #555;
-  cursor: pointer;
 }
 
 .btn-close:hover {
@@ -572,20 +566,27 @@ body.is-dragging .entries-list .entry-row .entry-actions * {
 
 .settings-actions {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 26px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 14px;
+}
+
+.settings-actions-label {
+  min-width: 4.5em;
+  font-size: 13px;
+  color: #555;
 }
 
 .btn-settings {
-  padding: 8px 14px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 12px;
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
   color: #555;
   cursor: pointer;
-  width: 130px;
 }
 
 .btn-settings:hover {
@@ -597,13 +598,6 @@ body.is-dragging .entries-list .entry-row .entry-actions * {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
-  color: #555;
-  cursor: pointer;
 }
 
 .btn-back .btn-back-icon {
@@ -615,4 +609,64 @@ body.is-dragging .entries-list .entry-row .entry-actions * {
 .btn-back:hover {
   background: #e8e8e8;
   color: #333;
+}
+
+/* Settings controls */
+.settings-section {
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #333;
+}
+
+.settings-row input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
+.settings-shortcut-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.btn-settings-shortcut {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+}
+
+.btn-settings-shortcut:hover {
+  background: #f5f5f5;
+}
+
+.btn-settings-link {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: #0066cc;
+  cursor: pointer;
+}
+
+.btn-settings-link:hover {
+  text-decoration: underline;
+}
+
+.settings-hint {
+  margin: 4px 0 0 22px;
+  font-size: 12px;
+  color: #555;
 }

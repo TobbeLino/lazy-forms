@@ -17,6 +17,17 @@ const STORAGE_KEY = 'lazyForms';
 const VERSION = 1;
 const PENDING_STORE_KEY = 'lazy-forms-pendingStore';
 
+// Global extension settings with safe defaults.
+const DEFAULT_SETTINGS = {
+  // Whether to show the inline icon on matching fields.
+  showFieldIcon: true,
+  // Whether to show the icon when the page has any matches without path/selector (URL, domain, custom URL, all).
+  showIconOnPageValues: false,
+  // Keyboard shortcut used to open the floating menu on the focused field.
+  // Stored as a human-readable string; content scripts normalize for matching.
+  shortcutOpenMenu: 'Ctrl+Alt+L',
+};
+
 // ============ STATE ============
 
 // Page info per tab: { url, origin, pathname, selector }
@@ -53,20 +64,40 @@ function safeSendMessage(msg) {
 async function loadStorage() {
   const result = await chrome.storage.sync.get(STORAGE_KEY);
   const data = result[STORAGE_KEY];
-  if (!data || !Array.isArray(data.entries)) {
-    entriesCache = [];
-    cacheValid = true;
-    return { version: VERSION, entries: [] };
-  }
-  entriesCache = data.entries;
+  const rawEntries = Array.isArray(data?.entries) ? data.entries : [];
+  const settings =
+    data && typeof data.settings === 'object'
+      ? { ...DEFAULT_SETTINGS, ...data.settings }
+      : { ...DEFAULT_SETTINGS };
+
+  entriesCache = rawEntries;
   cacheValid = true;
-  return { version: data.version ?? VERSION, entries: data.entries };
+
+  return {
+    version: data?.version ?? VERSION,
+    entries: rawEntries,
+    settings,
+  };
 }
 
 function getEntriesCached() {
   if (cacheValid) return entriesCache;
   // Cache not valid, return empty (caller should use loadStorage for critical paths)
   return [];
+}
+
+async function saveSettings(partialSettings) {
+  if (!partialSettings || typeof partialSettings !== 'object') return;
+  const result = await chrome.storage.sync.get(STORAGE_KEY);
+  const existing = result[STORAGE_KEY] || { version: VERSION, entries: [], settings: DEFAULT_SETTINGS };
+  const mergedSettings = {
+    ...DEFAULT_SETTINGS,
+    ...(existing.settings || {}),
+    ...partialSettings,
+  };
+  const next = { ...existing, settings: mergedSettings };
+  await chrome.storage.sync.set({ [STORAGE_KEY]: next });
+  return mergedSettings;
 }
 
 // ============ MATCHING (pure function) ============
@@ -231,6 +262,43 @@ function getMatchingEntries(entries, pageInfo) {
   return entries.filter((e) => matchesContext(e, pageInfo));
 }
 
+/** True if entry belongs in the floating menu "field" section (field-only or custom with path/selector). */
+function isFieldSectionEntry(entry) {
+  if (entry.contextType === 'fieldOnly') return true;
+  if (entry.contextType === 'urlPattern') {
+    const key = (entry.contextKey || '').trim();
+    if (!key) return false;
+    // Wildcard "*" (or URL-only pattern) has no path/selector → not field section
+    if (key === '*' || key.includes('://')) return false;
+    if (!key.includes('|')) return true; // selector-only (e.g. #id)
+    const parts = key.split('|');
+    return parts.length === 3; // origin|pathname|selector
+  }
+  return false;
+}
+
+const FLOATING_MENU_SECTION_MAX = 5;
+
+/**
+ * Build sections for the floating menu: field (all matching), url, domain, custom, all (max 5 each for latter).
+ * Custom = urlPattern that matched by URL glob only (no path/selector); no duplicates from field section.
+ */
+function getFloatingMenuSections(entries, pageInfo) {
+  if (!pageInfo || !Array.isArray(entries)) {
+    return { field: [], url: [], domain: [], custom: [], all: [] };
+  }
+  const matches = getMatchingEntries(entries, pageInfo);
+  const field = sortBySpecificity(matches.filter(isFieldSectionEntry));
+  const fieldIds = new Set(field.map((e) => e.id));
+  const url = sortBySpecificity(matches.filter((e) => e.contextType === 'url')).slice(0, FLOATING_MENU_SECTION_MAX);
+  const domain = sortBySpecificity(matches.filter((e) => e.contextType === 'domain')).slice(0, FLOATING_MENU_SECTION_MAX);
+  const custom = sortBySpecificity(
+    matches.filter((e) => e.contextType === 'urlPattern' && !fieldIds.has(e.id))
+  ).slice(0, FLOATING_MENU_SECTION_MAX);
+  const all = sortBySpecificity(matches.filter((e) => e.contextType === 'all')).slice(0, FLOATING_MENU_SECTION_MAX);
+  return { field, url, domain, custom, all };
+}
+
 const SPECIFICITY_RANK = { fieldOnly: 0, url: 1, domain: 2, all: 3, urlPattern: 4 };
 
 function sortOrder(a) {
@@ -352,12 +420,12 @@ async function refreshAll(tabId) {
   const state = { pageInfo, entries, matches };
   safeSendMessage({ type: 'stateUpdated', state });
 
-  // Enable predictive field tracking whenever there are field-only entries that could match
-  // (e.g. selector-only like #searchOverlayInput, or page-specific). So hover/focus updates
-  // the matching list even if the entry was added after the page loaded.
+  // Enable predictive field tracking when there are field-only entries that could match, or any
+  // page-level matches (URL, domain, custom, all) so the icon can show for "matching page values".
   if (pageInfo && entries.length > 0) {
     const hasFieldEntries = hasFieldEntriesForPage(entries, pageInfo);
-    if (hasFieldEntries) {
+    const hasPageMatches = matches.some((e) => !isFieldSectionEntry(e));
+    if (hasFieldEntries || hasPageMatches) {
       chrome.tabs.sendMessage(tabId, { type: 'enableFieldTracking' }).catch(() => {});
     }
   }
@@ -485,19 +553,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // Only keep field-specific matches: explicit fieldOnly, or urlPattern rules
       // that are selector-based (selector-only or origin|pathname|selector).
-      const fieldMatches = allMatches.filter((e) => {
-        if (e.contextType === 'fieldOnly') return true;
-        if (e.contextType === 'urlPattern') {
-          const key = (e.contextKey || '').trim();
-          if (!key) return false;
-          if (!key.includes('://') && !key.includes('|')) return true; // selector-only
-          const parts = key.split('|');
-          return parts.length === 3; // origin|pathname|selector (selector '*' = any field, still show icon)
-        }
-        return false;
-      });
+      const fieldMatches = allMatches.filter(isFieldSectionEntry);
+      const pageHasOtherMatches = allMatches.some((e) => !isFieldSectionEntry(e));
 
-      sendResponse?.({ ok: true, entries: sortBySpecificity(fieldMatches) });
+      sendResponse?.({
+        ok: true,
+        entries: sortBySpecificity(fieldMatches),
+        pageHasOtherMatches,
+      });
+    })();
+    return true; // async
+  }
+
+  // Content script: request sections for floating menu (field, url, domain, custom, all)
+  if (message.type === 'getFloatingMenuSections' && sender.tab?.id) {
+    (async () => {
+      const tabId = sender.tab.id;
+      let pageInfo = null;
+      if (message.pageInfo) {
+        pageInfo = {
+          url: message.pageInfo.url,
+          origin: message.pageInfo.origin,
+          pathname: message.pageInfo.pathname,
+          selector: message.pageInfo.selector || '',
+        };
+      } else {
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab?.url) pageInfo = pageInfoFromUrl(tab.url);
+      }
+      if (!pageInfo) {
+        sendResponse?.({ ok: false, error: 'No pageInfo' });
+        return;
+      }
+      const { entries } = await loadStorage();
+      const sections = getFloatingMenuSections(entries, pageInfo);
+      sendResponse?.({ ok: true, sections });
     })();
     return true; // async
   }
@@ -565,6 +655,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'panelClosing') {
     sidePanelOpenTabId = null;
     sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Any script: request current settings (with defaults applied)
+  if (message.type === 'getSettings') {
+    (async () => {
+      const { settings } = await loadStorage();
+      sendResponse?.({ ok: true, settings });
+    })();
+    return true;
+  }
+
+  // Sidepanel: update settings (e.g. showFieldIcon, shortcutOpenMenu)
+  if (message.type === 'updateSettings') {
+    (async () => {
+      const merged = await saveSettings(message.settings || {});
+
+      // Notify sidepanel and any other extension pages
+      safeSendMessage({ type: 'settingsUpdated', settings: merged });
+
+      // Broadcast to all tabs so content scripts update without reload
+      chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }, (tabs) => {
+        tabs.forEach((tab) => {
+          if (!tab.id) return;
+          chrome.tabs.sendMessage(tab.id, { type: 'settingsUpdated', settings: merged }).catch(() => {});
+        });
+      });
+
+      sendResponse?.({ ok: true, settings: merged });
+    })();
     return true;
   }
 

@@ -39,10 +39,34 @@
     <div id="settings-view" class="settings-view hidden">
     <h2 class="settings-title">Settings</h2>
     <div class="settings-actions">
-      <button type="button" id="export-btn" class="btn-settings">Export JSON</button>
-      <button type="button" id="import-btn" class="btn-settings">Import JSON</button>
+      <span class="settings-actions-label">Import/Export values:</span>
+      <button type="button" id="export-btn" class="btn-settings">Export</button>
+      <button type="button" id="import-btn" class="btn-settings">Import</button>
     </div>
-    <button type="button" id="settings-back-btn" class="btn-back">
+<!--     <div class="settings-actions">
+      <span class="settings-actions-label">Settings:</span>
+      <button type="button" id="export-settings-btn" class="btn-settings">Export</button>
+      <button type="button" id="import-settings-btn" class="btn-settings">Import</button>
+    </div>
+ -->    <div class="settings-section">
+      <label class="settings-row">
+        <input type="checkbox" id="setting-show-icon">
+        <span>Show icon on matching input elements</span>
+      </label>
+      <label class="settings-row">
+        <input type="checkbox" id="setting-show-icon-page">
+        <span>Show icon on matching page</span>
+      </label>
+      <div class="settings-row">
+        <div class="settings-shortcut-label">Shortcut for floating menu</div>
+        <button type="button" id="shortcut-edit-btn" class="btn-settings-shortcut" aria-label="Change keyboard shortcut">
+          <span id="shortcut-display">Ctrl+Alt+L</span>
+        </button>
+        <button type="button" id="shortcut-reset-btn" class="btn-settings-link">Reset</button>
+      </div>
+      <p id="shortcut-hint" class="settings-hint hidden">Press the keys you want to use, or Esc to cancel.</p>
+    </div>
+    <button type="button" id="settings-back-btn" class="btn-settings btn-back">
       <svg class="btn-back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
       Back
     </button>
@@ -50,7 +74,7 @@
   </div>
 
   <footer class="panel-footer">
-    <button type="button" id="close-panel-btn" class="btn-close">Close</button>
+    <button type="button" id="close-panel-btn" class="btn-settings btn-close">Close</button>
   </footer>
 
   <script src="sidepanel.js"></script>

@@ -57,6 +57,21 @@ function setFieldValue(el, v) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+/**
+ * Run a callback repeatedly at a fixed interval, then stop.
+ * @param {() => void} callback
+ * @param {number} intervalMs
+ * @param {number} times - number of times to run (first run after intervalMs)
+ */
+function runRepeatedly(callback, intervalMs, times) {
+  let count = 0;
+  const id = setInterval(() => {
+    callback();
+    count++;
+    if (count >= times) clearInterval(id);
+  }, intervalMs);
+}
+
 let lastRightClickedElement = null;
 let lastContextMenuX = 0;
 let lastContextMenuY = 0;
@@ -71,6 +86,8 @@ let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
 /** When true, do not reposition the icon (e.g. while user has mouse down on it, so Jira spinner can't steal the click). */
 let fieldButtonPositionFrozen = false;
+// Track which field the current floating menu belongs to (if any)
+let currentFloatingMenuField = null;
 /** Right edge of the visible (clipped) area for el. Only clamp when the field actually overflows its container. */
 function getVisibleRightEdge(el) {
   const rect = el.getBoundingClientRect();
@@ -168,11 +185,33 @@ function ensureFieldButton(el) {
       fieldButtonPositionFrozen = true;
     });
 
+    // Keyboard handling when the icon itself has focus
+    btn.addEventListener('keydown', (e) => {
+      // Shift+Tab from the icon should return focus to the field (since the icon lives at the end of the tab order)
+      if (e.key === 'Tab' && e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (fieldButtonTarget && typeof fieldButtonTarget.focus === 'function') {
+          fieldButtonTarget.focus();
+        }
+      }
+    });
+
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const target = fieldButtonTarget;
       if (!target) return;
+      // Toggle behavior:
+      // - If a floating menu is already open for this field, close it.
+      // - Otherwise, open (or re-open) the menu for this field.
+      const existingMenu = document.getElementById('lazy-forms-floating-menu');
+      if (existingMenu && currentFloatingMenuField === target) {
+        removeExistingFloatingMenu();
+        currentFloatingMenuField = null;
+        return;
+      }
+
       lastRightClickedElement = target;
       const selector = getStableSelector(target);
       const rect = target.getBoundingClientRect();
@@ -180,7 +219,7 @@ function ensureFieldButton(el) {
       try {
         chrome.runtime.sendMessage(
           {
-            type: 'getFieldMatches',
+            type: 'getFloatingMenuSections',
             pageInfo: {
               url: location.href,
               origin: location.origin,
@@ -190,8 +229,7 @@ function ensureFieldButton(el) {
           },
           (reply) => {
             if (!reply || !reply.ok) return;
-            const entries = reply.entries || [];
-            showFloatingMenu(entries, position);
+            showFloatingMenu(reply.sections || {}, position);
           }
         ).catch?.(() => {});
       } catch {
@@ -203,6 +241,12 @@ function ensureFieldButton(el) {
   }
   startFieldButtonResizeObserving(el);
   positionFieldButton();
+}
+
+function shouldShowFieldIcon(entries, pageHasOtherMatches) {
+  const showField = (entries?.length ?? 0) > 0 && lazyFormsSettings.showFieldIcon;
+  const showPage = !!pageHasOtherMatches && !!lazyFormsSettings.showIconOnPageValues;
+  return showField || showPage;
 }
 
 window.addEventListener(
@@ -231,6 +275,50 @@ document.addEventListener(
   },
   true
 );
+
+// ============ SETTINGS (icon toggle + shortcut) ============
+
+let lazyFormsSettings = {
+  showFieldIcon: true,
+  showIconOnPageValues: false,
+  shortcutOpenMenu: 'Ctrl+Alt+L',
+};
+
+function updateSettingsFromBackground(newSettings) {
+  if (!newSettings || typeof newSettings !== 'object') return;
+  const merged = {
+    ...lazyFormsSettings,
+    ...newSettings,
+  };
+  // Basic validation: ensure shortcut has a non-modifier key at the end; otherwise fall back to default
+  if (merged.shortcutOpenMenu && typeof merged.shortcutOpenMenu === 'string') {
+    const parts = merged.shortcutOpenMenu.split('+').map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (!last || ['Control', 'Ctrl', 'Shift', 'Alt', 'Meta'].includes(last)) {
+      merged.shortcutOpenMenu = 'Ctrl+Alt+L';
+    }
+  } else {
+    merged.shortcutOpenMenu = 'Ctrl+Alt+L';
+  }
+  lazyFormsSettings = merged;
+}
+
+function normalizeEventToShortcut(e) {
+  const parts = [];
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.altKey) parts.push('Alt');
+  if (e.metaKey) parts.push('Meta');
+  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  parts.push(key);
+  return parts.join('+');
+}
+
+function matchesConfiguredShortcut(e) {
+  if (!lazyFormsSettings || !lazyFormsSettings.shortcutOpenMenu) return false;
+  const actual = normalizeEventToShortcut(e);
+  return actual.toLowerCase() === String(lazyFormsSettings.shortcutOpenMenu).toLowerCase();
+}
 
 document.addEventListener(
   'contextmenu',
@@ -262,6 +350,50 @@ document.addEventListener(
       }).catch?.(() => {});
     } catch {
       // ignore if messaging is not available
+    }
+  },
+  true
+);
+
+// Initial settings load
+try {
+  chrome.runtime.sendMessage({ type: 'getSettings' }, (response) => {
+    if (!response?.ok) return;
+    updateSettingsFromBackground(response.settings || {});
+  });
+} catch {}
+
+// Keyboard shortcut: open floating menu for focused field
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (!matchesConfiguredShortcut(e)) return;
+    const el = document.activeElement;
+    if (!el || !isEditableFormField(el)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    lastRightClickedElement = el;
+    const selector = getStableSelector(el);
+    const rect = el.getBoundingClientRect();
+    const position = { x: rect.right, y: rect.bottom };
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'getFloatingMenuSections',
+          pageInfo: {
+            url: location.href,
+            origin: location.origin,
+            pathname: location.pathname,
+            selector,
+          },
+        },
+        (reply) => {
+          if (!reply || !reply.ok) return;
+          showFloatingMenu(reply.sections || {}, position);
+        }
+      ).catch?.(() => {});
+    } catch {
+      // ignore errors
     }
   },
   true
@@ -369,6 +501,75 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'settingsUpdated') {
+    updateSettingsFromBackground(message.settings || {});
+    if (!lazyFormsSettings.showFieldIcon && !lazyFormsSettings.showIconOnPageValues) {
+      hideFieldButton();
+    } else {
+      // If any icon setting is on, try to show icon for the current focused field (if any)
+      const el = document.activeElement;
+      if (el && isEditableFormField(el)) {
+        lastRightClickedElement = el;
+        const selector = getStableSelector(el);
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: 'getFieldMatches',
+              pageInfo: {
+                url: location.href,
+                origin: location.origin,
+                pathname: location.pathname,
+                selector,
+              },
+            },
+            (reply) => {
+              if (!reply || !reply.ok) {
+                hideFieldButton();
+                return;
+              }
+              const entries = reply.entries || [];
+              const pageHasOtherMatches = !!reply.pageHasOtherMatches;
+              if (shouldShowFieldIcon(entries, pageHasOtherMatches)) {
+                ensureFieldButton(el);
+              } else if (fieldButtonTarget === el) {
+                hideFieldButton();
+              }
+            }
+          ).catch?.(() => {});
+        } catch {
+          // ignore
+        }
+      } else if (fieldButtonTarget) {
+        // No focused field but icon might be visible from a previous field; re-check with that field
+        const el = fieldButtonTarget;
+        const selector = getStableSelector(el);
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: 'getFieldMatches',
+              pageInfo: {
+                url: location.href,
+                origin: location.origin,
+                pathname: location.pathname,
+                selector,
+              },
+            },
+            (reply) => {
+              if (!reply || !reply.ok) return;
+              const entries = reply.entries || [];
+              const pageHasOtherMatches = !!reply.pageHasOtherMatches;
+              if (!shouldShowFieldIcon(entries, pageHasOtherMatches)) {
+                hideFieldButton();
+              }
+            }
+          ).catch?.(() => {});
+        } catch {}
+      }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   return false;
 });
 
@@ -381,12 +582,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 function enableFieldTracking() {
   if (fieldTrackingEnabled) return;
   fieldTrackingEnabled = true;
-  console.log('[Lazy forms] Predictive field tracking enabled');
+  // console.log('[Lazy forms] Predictive field tracking enabled');
 
   // focusin bubbles; mouseover bubbles (mouseenter does NOT!)
   document.addEventListener('focusin', onFieldInteraction, true);
   document.addEventListener('mouseover', onFieldInteraction, true);
   document.addEventListener('mousedown', onFieldInteraction, true);
+
+  // Pages may autofocus an input before our listeners run, or shortly after (e.g. google.com).
+  // Check activeElement now and again after short delays to catch delayed autofocus.
+  function checkAutofocusedField() {
+    try {
+      const el = document.activeElement;
+      if (el && isEditableFormField(el)) {
+        onFieldInteraction({ type: 'autofocus', target: el });
+      }
+    } catch (_) {}
+  }
+  checkAutofocusedField();
+  runRepeatedly(checkAutofocusedField, 100, 5);
 }
 
 function onFieldInteraction(e) {
@@ -398,7 +612,7 @@ function onFieldInteraction(e) {
   if (selector === lastHoveredSelector) return;
   lastHoveredSelector = selector;
 
-  console.log('[Lazy forms] Predictive: field interacted', e.type, selector);
+  // console.log('[Lazy forms] Predictive: field interacted', e.type, selector);
 
   // Update lastRightClickedElement so applyValue works even before right-click
   lastRightClickedElement = el;
@@ -417,7 +631,7 @@ function onFieldInteraction(e) {
       })
       .catch(() => {});
 
-    // Ask background if this field has specific matches; if so, show inline button.
+    // Ask background if this field has specific matches; if so, show inline button (if enabled in settings).
     chrome.runtime.sendMessage(
       {
         type: 'getFieldMatches',
@@ -434,7 +648,8 @@ function onFieldInteraction(e) {
           return;
         }
         const entries = reply.entries || [];
-        if (entries.length > 0) {
+        const pageHasOtherMatches = !!reply.pageHasOtherMatches;
+        if (shouldShowFieldIcon(entries, pageHasOtherMatches)) {
           ensureFieldButton(el);
         } else if (fieldButtonTarget === el) {
           hideFieldButton();
@@ -576,7 +791,11 @@ function clearPageHighlight() {
   }
 }
 
-function showFloatingMenu(entries, position) {
+/**
+ * @param {{ field?: unknown[], url?: unknown[], domain?: unknown[], custom?: unknown[], all?: unknown[] } | unknown[]} sectionsOrEntries
+ * @param {{ x: number, y: number }} position
+ */
+function showFloatingMenu(sectionsOrEntries, position) {
   removeExistingFloatingMenu();
 
   const container = document.createElement('div');
@@ -615,6 +834,13 @@ function showFloatingMenu(entries, position) {
     #lazy-forms-floating-menu [role="menuitem"]:hover {
       background: #f0f0f0;
     }
+    #lazy-forms-floating-menu [role="menuitem"]:focus,
+    #lazy-forms-floating-menu .add-value-link:focus {
+      outline: 2px solid #000;
+      outline-offset: -2px;
+      background: #f0f0f0;
+      border-radius: 4px;
+    }
     #lazy-forms-floating-menu [data-empty] {
       padding: 12px;
       color: #666;
@@ -627,7 +853,7 @@ function showFloatingMenu(entries, position) {
     #lazy-forms-floating-menu .add-value-link {
       display: block;
       padding: 8px 12px;
-      color: #4a9eff;
+      color: #000;
       text-decoration: none;
       font-size: 13px;
       cursor: pointer;
@@ -638,32 +864,61 @@ function showFloatingMenu(entries, position) {
   `;
   document.head.appendChild(style);
 
-  if (entries.length === 0) {
-    const empty = document.createElement('div');
-    empty.setAttribute('data-empty', '');
-    empty.textContent = 'No stored values match this field.';
-    container.appendChild(empty);
-  } else {
-    entries.forEach((entry) => {
-      const btn = document.createElement('button');
-      btn.setAttribute('role', 'menuitem');
-      btn.type = 'button';
-      const label = entry.label || entry.value;
-      btn.textContent = label.length > 48 ? label.slice(0, 45) + '…' : label;
-      btn.title = entry.value;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (lastRightClickedElement) {
-          setFieldValue(lastRightClickedElement, entry.value ?? '');
-        }
-        removeExistingFloatingMenu();
-      });
-      container.appendChild(btn);
+  const items = [];
+  const isSections =
+    sectionsOrEntries &&
+    typeof sectionsOrEntries === 'object' &&
+    !Array.isArray(sectionsOrEntries) &&
+    'field' in sectionsOrEntries;
+
+  function appendEntryButton(entry) {
+    const btn = document.createElement('button');
+    btn.setAttribute('role', 'menuitem');
+    btn.type = 'button';
+    const label = entry.label || entry.value;
+    btn.textContent = label.length > 48 ? label.slice(0, 45) + '…' : label;
+    btn.title = entry.value;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (lastRightClickedElement) {
+        setFieldValue(lastRightClickedElement, entry.value ?? '');
+      }
+      close();
     });
+    container.appendChild(btn);
+    items.push(btn);
   }
 
-  const hr = document.createElement('hr');
-  container.appendChild(hr);
+  if (isSections) {
+    const sections = sectionsOrEntries;
+    const sectionOrder = ['field', 'url', 'domain', 'custom', 'all'];
+    let needDivider = false;
+    for (const key of sectionOrder) {
+      const entries = Array.isArray(sections[key]) ? sections[key] : [];
+      if (entries.length === 0) continue;
+      if (needDivider) container.appendChild(document.createElement('hr'));
+      needDivider = true;
+      entries.forEach(appendEntryButton);
+    }
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.setAttribute('data-empty', '');
+      empty.textContent = 'No stored values match this field.';
+      container.appendChild(empty);
+    }
+  } else {
+    const entries = Array.isArray(sectionsOrEntries) ? sectionsOrEntries : [];
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.setAttribute('data-empty', '');
+      empty.textContent = 'No stored values match this field.';
+      container.appendChild(empty);
+    } else {
+      entries.forEach(appendEntryButton);
+    }
+  }
+
+  container.appendChild(document.createElement('hr'));
   const addLink = document.createElement('a');
   addLink.className = 'add-value-link';
   addLink.href = '#';
@@ -671,7 +926,7 @@ function showFloatingMenu(entries, position) {
   addLink.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    removeExistingFloatingMenu();
+    close();
     if (lastRightClickedElement) {
       try {
         chrome.runtime.sendMessage({
@@ -688,20 +943,70 @@ function showFloatingMenu(entries, position) {
     }
   });
   container.appendChild(addLink);
+  items.push(addLink);
 
   container.style.left = `${position.x}px`;
   container.style.top = `${position.y}px`;
 
   document.body.appendChild(container);
 
+  // Remember which field this menu belongs to (for icon-toggle behavior)
+  currentFloatingMenuField = lastRightClickedElement || null;
+
+  // Focus first item when opened so it is keyboard navigable (especially when opened via shortcut)
+  if (items.length > 0) {
+    try {
+      items[0].focus();
+    } catch {}
+  }
+
   const close = () => {
     removeExistingFloatingMenu();
+    // Restore focus to the original field so the user can continue typing
+    try {
+      if (lastRightClickedElement && typeof lastRightClickedElement.focus === 'function') {
+        lastRightClickedElement.focus();
+      }
+    } catch {}
+    currentFloatingMenuField = null;
     document.removeEventListener('click', close);
     document.removeEventListener('keydown', onKey);
   };
 
   const onKey = (e) => {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      return;
+    }
+
+    if (!items.length) return;
+
+    const currentIndex = items.findIndex((el) => el === document.activeElement);
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      let nextIndex = 0;
+      if (currentIndex === -1) {
+        nextIndex = 0;
+      } else if (e.key === 'ArrowDown') {
+        nextIndex = (currentIndex + 1) % items.length;
+      } else {
+        nextIndex = (currentIndex - 1 + items.length) % items.length;
+      }
+      try {
+        items[nextIndex].focus();
+      } catch {}
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      if (currentIndex >= 0 && currentIndex < items.length) {
+        e.preventDefault();
+        items[currentIndex].click();
+      }
+      return;
+    }
   };
 
   container.addEventListener('click', (e) => e.stopPropagation());
@@ -715,12 +1020,7 @@ function removeExistingFloatingMenu() {
     existing.remove();
     // Reposition the icon after layout settles (e.g. after Jira re-renders on value select)
     if (fieldButtonTarget) {
-      let i = 0;
-      const interval = setInterval(() => {
-        positionFieldButton();
-        i++;
-        if (i > 8) clearInterval(interval);
-      }, 100);
+      runRepeatedly(positionFieldButton, 100, 8);
     }
   }
 }

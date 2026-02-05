@@ -7,6 +7,7 @@ const STORAGE_KEY = 'lazyForms';
 const PENDING_STORE_KEY = 'lazy-forms-pendingStore';
 
 let currentState = null;
+let currentSettings = null;
 let showAllValues = false;
 let addSectionVisible = false;
 let showSettings = false;
@@ -68,6 +69,18 @@ async function getStore() {
   return data[STORAGE_KEY] || { version: 1, entries: [] };
 }
 
+async function getSettings() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'getSettings' }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        resolve(null);
+        return;
+      }
+      resolve(response.settings || null);
+    });
+  });
+}
+
 async function getPendingStore() {
   const data = await chrome.storage.session.get(PENDING_STORE_KEY);
   return data[PENDING_STORE_KEY] || null;
@@ -95,6 +108,29 @@ async function deleteEntry(id) {
   const store = await getStore();
   store.entries = store.entries.filter((e) => e.id !== id);
   await chrome.storage.sync.set({ [STORAGE_KEY]: store });
+}
+
+function normalizeShortcutDisplay(shortcut) {
+  if (!shortcut || typeof shortcut !== 'string') return 'Ctrl+Alt+L';
+  const parts = shortcut.split('+').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return 'Ctrl+Alt+L';
+  const last = parts[parts.length - 1];
+  if (['Control', 'Ctrl', 'Shift', 'Alt', 'Meta'].includes(last)) {
+    return 'Ctrl+Alt+L';
+  }
+  return parts.join('+');
+}
+
+async function saveSettingsFromPanel(partial) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'updateSettings', settings: partial }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        resolve(null);
+        return;
+      }
+      resolve(response.settings || null);
+    });
+  });
 }
 
 function groupBySpecificity(entries) {
@@ -191,6 +227,12 @@ function renderAddForm(pendingStore, container) {
     </div>
   `;
   container.appendChild(form);
+
+  // Move initial focus to Save so a new value can quickly be added with Enter
+  const initialSaveBtn = form.querySelector('#store-save');
+  if (initialSaveBtn && typeof initialSaveBtn.focus === 'function') {
+    initialSaveBtn.focus();
+  }
 
   const keyInput = document.getElementById('store-context-key');
   const aimBtn = document.getElementById('store-aim-btn');
@@ -332,6 +374,7 @@ async function doRender(state) {
 
   const pendingStore = await getPendingStore();
   if (pendingStore && state?.pageInfo) {
+    setSettingsView(false); // If settings were open, show main view so the add form is visible
     addSectionVisible = true;
     addSection.classList.remove('hidden');
     renderAddForm(pendingStore, addSection);
@@ -612,6 +655,22 @@ function setSettingsView(visible) {
   if (settingsView) settingsView.classList.toggle('hidden', !visible);
 }
 
+function applySettingsToUi() {
+  const showIconCheckbox = document.getElementById('setting-show-icon');
+  const showIconPageCheckbox = document.getElementById('setting-show-icon-page');
+  const shortcutDisplay = document.getElementById('shortcut-display');
+  if (!currentSettings) return;
+  if (showIconCheckbox) {
+    showIconCheckbox.checked = !!currentSettings.showFieldIcon;
+  }
+  if (showIconPageCheckbox) {
+    showIconPageCheckbox.checked = !!currentSettings.showIconOnPageValues;
+  }
+  if (shortcutDisplay) {
+    shortcutDisplay.textContent = normalizeShortcutDisplay(currentSettings.shortcutOpenMenu);
+  }
+}
+
 function requestState() {
   chrome.runtime.sendMessage({ type: 'getState' }, (response) => {
     if (chrome.runtime.lastError) return;
@@ -712,7 +771,139 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  requestState();
+  const SETTINGS_KEYS = ['showFieldIcon', 'showIconOnPageValues', 'shortcutOpenMenu'];
+  const exportSettingsBtn = document.getElementById('export-settings-btn');
+  const importSettingsBtn = document.getElementById('import-settings-btn');
+  if (exportSettingsBtn) {
+    exportSettingsBtn.addEventListener('click', async () => {
+      const settings = currentSettings || (await getSettings()) || {};
+      const toExport = {};
+      SETTINGS_KEYS.forEach((k) => {
+        if (settings[k] !== undefined) toExport[k] = settings[k];
+      });
+      const blob = new Blob([JSON.stringify({ settings: toExport }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'lazy-forms-settings.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  }
+  if (importSettingsBtn) {
+    importSettingsBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json,.json';
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          const raw = parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed;
+          const toApply = {};
+          SETTINGS_KEYS.forEach((k) => {
+            if (raw[k] !== undefined) toApply[k] = raw[k];
+          });
+          if (Object.keys(toApply).length === 0) {
+            alert('Invalid format: expected { settings: { ... } } or settings object with showFieldIcon, shortcutOpenMenu, etc.');
+            return;
+          }
+          const next = await saveSettingsFromPanel(toApply);
+          if (next) {
+            currentSettings = next;
+            applySettingsToUi();
+          }
+        } catch (err) {
+          alert('Invalid JSON: ' + err.message);
+        }
+      };
+      input.click();
+    });
+  }
+
+  const showIconCheckbox = document.getElementById('setting-show-icon');
+  const showIconPageCheckbox = document.getElementById('setting-show-icon-page');
+  const shortcutEditBtn = document.getElementById('shortcut-edit-btn');
+  const shortcutResetBtn = document.getElementById('shortcut-reset-btn');
+  const shortcutHint = document.getElementById('shortcut-hint');
+
+  if (showIconCheckbox) {
+    showIconCheckbox.addEventListener('change', async () => {
+      const next = await saveSettingsFromPanel({ showFieldIcon: showIconCheckbox.checked });
+      if (next) {
+        currentSettings = next;
+        applySettingsToUi();
+      }
+    });
+  }
+  if (showIconPageCheckbox) {
+    showIconPageCheckbox.addEventListener('change', async () => {
+      const next = await saveSettingsFromPanel({ showIconOnPageValues: showIconPageCheckbox.checked });
+      if (next) {
+        currentSettings = next;
+        applySettingsToUi();
+      }
+    });
+  }
+
+  if (shortcutEditBtn && shortcutHint) {
+    shortcutEditBtn.addEventListener('click', () => {
+      if (!shortcutHint.classList.contains('hidden')) return;
+      shortcutHint.classList.remove('hidden');
+      const onKeyDown = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', onKeyDown, true);
+          shortcutHint.classList.add('hidden');
+          return;
+        }
+        // Ignore pure modifier presses; wait for a real key while modifiers are held
+        if (e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta') {
+          return;
+        }
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.altKey) parts.push('Alt');
+        if (e.metaKey) parts.push('Meta');
+        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        if (!parts.length) {
+          // Require at least one modifier to avoid stealing normal typing keys
+          return;
+        }
+        parts.push(key);
+        const shortcut = parts.join('+');
+        document.removeEventListener('keydown', onKeyDown, true);
+        shortcutHint.classList.add('hidden');
+        const next = await saveSettingsFromPanel({ shortcutOpenMenu: shortcut });
+        if (next) {
+          currentSettings = next;
+          applySettingsToUi();
+        }
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+    });
+  }
+
+  if (shortcutResetBtn) {
+    shortcutResetBtn.addEventListener('click', async () => {
+      const next = await saveSettingsFromPanel({ shortcutOpenMenu: 'Ctrl+Alt+L' });
+      if (next) {
+        currentSettings = next;
+        applySettingsToUi();
+      }
+    });
+  }
+
+  getSettings().then((settings) => {
+    if (settings) {
+      currentSettings = settings;
+      applySettingsToUi();
+    }
+    requestState();
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -724,6 +915,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.type === 'stateUpdated') {
     render(message.state);
+    sendResponse?.({ ok: true });
+    return true;
+  }
+  if (message.type === 'settingsUpdated') {
+    currentSettings = message.settings || currentSettings;
+    applySettingsToUi();
     sendResponse?.({ ok: true });
     return true;
   }
