@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "bestzip lazy-forms.zip manifest.json background.js content.js lib/ popup/ sidepanel/",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
@@ -17,6 +18,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "bestzip": "^2.2.1",
     "eslint": "^9.39.0"
   },
   "engines": {
