@@ -58,7 +58,6 @@ function setFieldValue(el, v) {
 }
 
 let lastRightClickedElement = null;
-let lastRightClickedValue = null;
 let lastContextMenuX = 0;
 let lastContextMenuY = 0;
 
@@ -72,6 +71,23 @@ let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
 /** When true, do not reposition the icon (e.g. while user has mouse down on it, so Jira spinner can't steal the click). */
 let fieldButtonPositionFrozen = false;
+/** Right edge of the visible (clipped) area for el. Only clamp when the field actually overflows its container. */
+function getVisibleRightEdge(el) {
+  const rect = el.getBoundingClientRect();
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    const s = getComputedStyle(node);
+    const overflow = s.overflowX || s.overflow || '';
+    if (overflow === 'hidden' || overflow === 'clip' || overflow === 'scroll' || overflow === 'auto') {
+      const r = node.getBoundingClientRect();
+      // Only use container's right when the field actually extends past it (overflow); else use field's right
+      const right = rect.right > r.right ? r.right : rect.right;
+      return Math.min(right, window.innerWidth);
+    }
+    node = node.parentElement;
+  }
+  return Math.min(rect.right, window.innerWidth);
+}
 
 function positionFieldButton() {
   if (fieldButtonPositionFrozen) return;
@@ -84,8 +100,12 @@ function positionFieldButton() {
   }
   const size = 18;
   const top = rect.top + (rect.height - size) / 2;
-  // Align right edge of button with right edge of field (was: rect.right - size/2)
-  const left = rect.right - size;
+  // Use visible right edge so we don't place the icon past overflow:hidden/clip containers (e.g. Jira)
+  let visibleRight = getVisibleRightEdge(fieldButtonTarget);
+  // Account for field's padding-right (e.g. textareas) so the icon sits at the content edge, not over the padding
+  const paddingRightPx = parseFloat(getComputedStyle(fieldButtonTarget).paddingRight) || 0;
+  visibleRight -= paddingRightPx;
+  const left = visibleRight - size;
   btn.style.display = 'flex';
   btn.style.top = `${Math.max(0, top)}px`;
   btn.style.left = `${Math.max(0, left)}px`;
@@ -224,7 +244,6 @@ document.addEventListener(
       return;
     }
     lastRightClickedElement = el;
-    lastRightClickedValue = getFieldValue(el);
     lastContextMenuX = e.clientX;
     lastContextMenuY = e.clientY;
     try {
@@ -649,5 +668,16 @@ function showFloatingMenu(entries, position) {
 
 function removeExistingFloatingMenu() {
   const existing = document.getElementById('lazy-forms-floating-menu');
-  if (existing) existing.remove();
+  if (existing) {
+    existing.remove();
+    // Reposition the icon after layout settles (e.g. after Jira re-renders on value select)
+    if (fieldButtonTarget) {
+      let i = 0;
+      const interval = setInterval(() => {
+        positionFieldButton();
+        i++;
+        if (i > 8) clearInterval(interval);
+      }, 100);
+    }
+  }
 }

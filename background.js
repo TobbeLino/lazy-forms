@@ -66,10 +66,6 @@ function getEntriesCached() {
   return [];
 }
 
-async function saveStorage(data) {
-  await chrome.storage.sync.set({ [STORAGE_KEY]: data });
-}
-
 // ============ MATCHING (pure function) ============
 
 function globToRegex(glob) {
@@ -329,7 +325,7 @@ function hasFieldEntriesForPage(entries, pageInfo) {
  * The ONE function that refreshes everything for a tab.
  * Called on: page load, storage change, context menu open, sidepanel request, field hover.
  */
-async function refreshAll(tabId, options = {}) {
+async function refreshAll(tabId) {
   if (!tabId) return null;
 
   const pageInfo = activeTabState[tabId]?.pageInfo;
@@ -391,7 +387,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       pageInfo.selector = existing.selector;
     }
     updatePageInfo(tabId, pageInfo);
-    refreshAll(tabId, { checkFieldTracking: true });
+    refreshAll(tabId);
   }
 });
 
@@ -488,7 +484,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       });
 
-      sendResponse?.({ ok: true, entries: fieldMatches });
+      sendResponse?.({ ok: true, entries: sortBySpecificity(fieldMatches) });
     })();
     return true; // async
   }
@@ -760,4 +756,3 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete activeTabState[tabId];
 });
-
