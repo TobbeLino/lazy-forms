@@ -33,6 +33,9 @@ let cacheValid = false;
 // Tab that is currently in pick-element (aim) mode; null if none
 let pickModeTabId = null;
 
+// Tab ID for which we believe the side panel is open (for toolbar icon toggle)
+let sidePanelOpenTabId = null;
+
 // ============ HELPERS ============
 
 /** Send message without throwing when extension context is invalidated (e.g. after reload). */
@@ -73,6 +76,18 @@ function globToRegex(glob) {
   return new RegExp(`^${escaped}$`);
 }
 
+function originMatches(keyOrigin, origin) {
+  if (!keyOrigin || !origin) return keyOrigin === origin;
+  if (keyOrigin.includes('*') || keyOrigin.includes('?')) {
+    try {
+      return globToRegex(keyOrigin).test(origin);
+    } catch {
+      return false;
+    }
+  }
+  return keyOrigin === origin;
+}
+
 function matchesContext(entry, pageInfo) {
   if (!pageInfo) return false;
   const { url, origin, pathname, selector } = pageInfo;
@@ -88,8 +103,7 @@ function matchesContext(entry, pageInfo) {
         if (parts.length === 3) {
           const [keyOrigin, keyPathname, keySelector] = parts;
 
-          // Origin must match exactly
-          if (keyOrigin === origin) {
+          if (originMatches(keyOrigin, origin)) {
             // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
             let pathnameMatches = false;
             if (!keyPathname || keyPathname === '*') {
@@ -160,8 +174,7 @@ function matchesContext(entry, pageInfo) {
       if (parts.length === 3 && selector) {
         const [keyOrigin, keyPathname, keySelector] = parts;
 
-        // Origin must match exactly (no globbing here)
-        if (keyOrigin === origin) {
+        if (originMatches(keyOrigin, origin)) {
           // Pathname: support '*' / '?' wildcards; empty or '*' means "any path"
           let pathnameMatches = false;
           if (!keyPathname || keyPathname === '*') {
@@ -295,7 +308,7 @@ function hasFieldEntriesForPage(entries, pageInfo) {
         const parts = key.split('|');
         if (parts.length >= 2) {
           const [keyOrigin, keyPathname] = parts;
-          if (keyOrigin !== origin) return false;
+          if (!originMatches(keyOrigin, origin)) return false;
           return pathnameCouldMatch(keyPathname);
         }
         // legacy: exact prefix match
@@ -312,7 +325,7 @@ function hasFieldEntriesForPage(entries, pageInfo) {
       const parts = key.split('|');
       if (parts.length >= 2) {
         const [keyOrigin, keyPathname] = parts;
-        if (keyOrigin !== origin) return false;
+        if (!originMatches(keyOrigin, origin)) return false;
         return pathnameCouldMatch(keyPathname);
       }
     }
@@ -479,7 +492,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (!key) return false;
           if (!key.includes('://') && !key.includes('|')) return true; // selector-only
           const parts = key.split('|');
-          return parts.length === 3 && parts[2] && parts[2] !== '*';
+          return parts.length === 3; // origin|pathname|selector (selector '*' = any field, still show icon)
         }
         return false;
       });
@@ -514,8 +527,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Sidepanel: close panel (Chrome has no API to close side panel; window.close() is tried in panel)
+  // Content script: open side panel for "Add value…" from floating menu (pre-fill with current field)
+  if (message.type === 'openSidePanelForAdd' && sender.tab?.id) {
+    const tabId = sender.tab.id;
+    try {
+      chrome.sidePanel.open({ tabId, windowId: sender.tab.windowId });
+      sidePanelOpenTabId = tabId;
+    } catch {}
+    (async () => {
+      const pageInfo = message.pageInfo
+        ? {
+            url: message.pageInfo.url,
+            origin: message.pageInfo.origin,
+            pathname: message.pageInfo.pathname,
+            selector: message.pageInfo.selector || '',
+            value: message.pageInfo.value,
+          }
+        : null;
+      if (pageInfo) {
+        await chrome.storage.session.set({ [PENDING_STORE_KEY]: pageInfo });
+        updatePageInfo(tabId, pageInfo);
+      }
+      setTimeout(() => refreshAll(tabId), 100);
+    })();
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Sidepanel: close panel (user clicked X; clear toggle state so toolbar icon can re-open)
   if (message.type === 'closeSidePanel') {
+    sidePanelOpenTabId = null;
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Sidepanel: panel is closing (so toolbar icon toggle state stays in sync)
+  if (message.type === 'panelClosing') {
+    sidePanelOpenTabId = null;
     sendResponse?.({ ok: true });
     return true;
   }
@@ -612,14 +660,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// When the side panel closes (Chrome's icon, our X, or any reason), its port disconnects → clear toggle state
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'sidepanel') return;
+  port.onDisconnect.addListener(() => {
+    sidePanelOpenTabId = null;
+  });
+});
+
 // ============ ACTION (EXTENSION ICON) ============
 
 chrome.action.onClicked.addListener((tab) => {
-  if (tab?.id) {
-    try {
-      chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId });
-    } catch {}
+  if (!tab?.id) return;
+  const tabId = tab.id;
+  if (sidePanelOpenTabId === tabId) {
+    chrome.runtime.sendMessage({ type: 'requestClosePanel' }, (response) => {
+      if (response?.closing) sidePanelOpenTabId = null;
+    });
+    return;
   }
+  try {
+    chrome.sidePanel.open({ tabId, windowId: tab.windowId });
+    sidePanelOpenTabId = tabId;
+  } catch {}
 });
 
 // ============ CONTEXT MENU SETUP ============
@@ -659,7 +722,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: 'lazy-forms-store',
       parentId: 'lazy-forms-parent',
-      title: 'Add value…',
+      title: 'Add lazy forms value…',
       contexts: menuContexts,
     });
 
@@ -709,6 +772,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (id === 'lazy-forms-store') {
     try {
       chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId });
+      sidePanelOpenTabId = tab.id;
     } catch {}
 
     (async () => {
@@ -747,6 +811,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (id === 'lazy-forms-more') {
     try {
       chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId });
+      sidePanelOpenTabId = tab.id;
     } catch {}
   }
 });

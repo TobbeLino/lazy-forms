@@ -619,6 +619,22 @@ function showFloatingMenu(entries, position) {
       padding: 12px;
       color: #666;
     }
+    #lazy-forms-floating-menu hr {
+      margin: 6px 0;
+      border: none;
+      border-top: 1px solid #e0e0e0;
+    }
+    #lazy-forms-floating-menu .add-value-link {
+      display: block;
+      padding: 8px 12px;
+      color: #4a9eff;
+      text-decoration: none;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #lazy-forms-floating-menu .add-value-link:hover {
+      background: #f0f0f0;
+    }
   `;
   document.head.appendChild(style);
 
@@ -645,6 +661,33 @@ function showFloatingMenu(entries, position) {
       container.appendChild(btn);
     });
   }
+
+  const hr = document.createElement('hr');
+  container.appendChild(hr);
+  const addLink = document.createElement('a');
+  addLink.className = 'add-value-link';
+  addLink.href = '#';
+  addLink.textContent = 'Add value…';
+  addLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    removeExistingFloatingMenu();
+    if (lastRightClickedElement) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'openSidePanelForAdd',
+          pageInfo: {
+            url: location.href,
+            origin: location.origin,
+            pathname: location.pathname,
+            selector: getStableSelector(lastRightClickedElement),
+            value: getFieldValue(lastRightClickedElement),
+          },
+        }).catch(() => {});
+      } catch {}
+    }
+  });
+  container.appendChild(addLink);
 
   container.style.left = `${position.x}px`;
   container.style.top = `${position.y}px`;

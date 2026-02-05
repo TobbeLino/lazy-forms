@@ -15,6 +15,11 @@ let currentDraggedLi = null;
 let currentGhost = null;
 let aimModeActive = false;
 
+// Port so background can detect when panel is closed (Chrome's icon, our X, etc.) and clear toggle state
+try {
+  chrome.runtime.connect({ name: 'sidepanel' });
+} catch {}
+
 function setAimModeActive(active) {
   aimModeActive = active;
   // Update all aim buttons to reflect active state
@@ -711,6 +716,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'requestClosePanel') {
+    sendResponse?.({ closing: true });
+    chrome.runtime.sendMessage({ type: 'panelClosing' }).catch(() => {});
+    window.close();
+    return true;
+  }
   if (message.type === 'stateUpdated') {
     render(message.state);
     sendResponse?.({ ok: true });
@@ -763,4 +774,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   return false;
+});
+
+window.addEventListener('beforeunload', () => {
+  chrome.runtime.sendMessage({ type: 'panelClosing' }).catch(() => {});
 });
