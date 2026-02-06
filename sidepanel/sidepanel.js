@@ -69,6 +69,131 @@ async function getStore() {
   return data[STORAGE_KEY] || { version: 1, entries: [] };
 }
 
+/** Set of normalized shortcuts currently in use (optionally excluding one entry by id). */
+async function getShortcutsInUse(excludeEntryId = null) {
+  const store = await getStore();
+  const entries = store?.entries || [];
+  const set = new Set();
+  for (const e of entries) {
+    if (excludeEntryId && e.id === excludeEntryId) continue;
+    const n = normalizeShortcutForComparison(e.shortcut);
+    if (n) set.add(n);
+  }
+  return set;
+}
+
+/** Normalize shortcut string for equality check (e.g. Ctrl+Alt+1 vs ctrl+alt+1). */
+function normalizeShortcutForComparison(shortcut) {
+  if (!shortcut || typeof shortcut !== 'string') return '';
+  return shortcut
+    .split('+')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .join('+');
+}
+
+/** True if two entries have the same value and context (so they are duplicates for merge). */
+function entrySameValueAndContext(a, b) {
+  const vA = a?.value ?? '';
+  const vB = b?.value ?? '';
+  if (vA !== vB) return false;
+  const lA = (a?.label ?? '').trim();
+  const lB = (b?.label ?? '').trim();
+  if (lA !== lB) return false;
+  if ((a?.contextType ?? '') !== (b?.contextType ?? '')) return false;
+  if ((a?.contextKey ?? '').trim() !== (b?.contextKey ?? '').trim()) return false;
+  return true;
+}
+
+/**
+ * Apply imported entries: merge (add to existing, deduped, shortcuts stripped on collision) or replace. Preserves current settings.
+ */
+async function applyImport(currentStore, importedEntries, importedVersion, merge) {
+  const version = currentStore?.version ?? 1;
+  const settings = currentStore?.settings ?? {};
+  let entries;
+  if (merge) {
+    const existing = currentStore?.entries || [];
+    const usedShortcuts = new Set(
+      existing
+        .map((e) => normalizeShortcutForComparison(e.shortcut))
+        .filter(Boolean)
+    );
+    const merged = [...existing];
+    for (const imp of importedEntries) {
+      const isDup = merged.some((e) => entrySameValueAndContext(e, imp));
+      if (isDup) continue;
+      const entry = { ...imp };
+      const norm = normalizeShortcutForComparison(entry.shortcut);
+      if (norm && usedShortcuts.has(norm)) entry.shortcut = undefined;
+      if (entry.shortcut) usedShortcuts.add(normalizeShortcutForComparison(entry.shortcut));
+      merged.push(entry);
+    }
+    entries = merged;
+  } else {
+    entries = importedEntries;
+  }
+  await chrome.storage.sync.set({
+    [STORAGE_KEY]: { version: merge ? version : (importedVersion ?? version), entries, settings },
+  });
+}
+
+/**
+ * Show a generic modal with title, body HTML, and buttons. Resolves with the chosen button value or 'cancel'.
+ * @param {{ titleId?: string, title?: string, bodyHtml: string, buttons: Array<{ label: string, value: string }> }} opts
+ * @returns {Promise<string>}
+ */
+function showModal(opts) {
+  const { titleId = 'modal-title', title = '', bodyHtml, buttons } = opts;
+  const overlay = document.createElement('div');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', titleId);
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--panel-bg,#fff);padding:20px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.2);max-width:320px;';
+  const titleHtml = title ? `<p id="${escapeHtml(titleId)}" style="margin:0 0 16px;font-size:14px;">${escapeHtml(title)}</p>` : '';
+  const buttonsHtml = buttons
+    .map((b) => `<button type="button" class="btn-settings" data-choice="${escapeHtml(b.value)}">${escapeHtml(b.label)}</button>`)
+    .join('');
+  box.innerHTML = `${titleHtml}<div style="margin:0 0 16px;font-size:13px;color:#555;">${bodyHtml}</div><div style="display:flex;gap:8px;justify-content:flex-end;">${buttonsHtml}</div>`;
+  overlay.appendChild(box);
+
+  return new Promise((resolve) => {
+    function close(choice) {
+      overlay.remove();
+      resolve(choice);
+    }
+    box.querySelectorAll('[data-choice]').forEach((btn) => {
+      btn.addEventListener('click', () => close(btn.dataset.choice));
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close('cancel');
+    });
+    document.body.appendChild(overlay);
+  });
+}
+
+/**
+ * Show a modal asking whether to merge or replace when importing and there are existing values.
+ * @param {number} existingCount
+ * @param {number} importedCount
+ * @param {(choice: 'merge' | 'replace' | 'cancel') => void} onChoice
+ */
+function showImportChoiceModal(existingCount, importedCount, onChoice) {
+  showModal({
+    titleId: 'import-choice-title',
+    title: `You have ${existingCount} stored value(s). The import file has ${importedCount} value(s).`,
+    bodyHtml: 'Merge (add imported to existing, duplicates by value+context are skipped, conflicting shortcuts removed) or replace all with the import?',
+    buttons: [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Replace all', value: 'replace' },
+      { label: 'Merge', value: 'merge' },
+    ],
+  }).then(onChoice);
+}
+
 async function getSettings() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'getSettings' }, (response) => {
@@ -110,13 +235,13 @@ async function deleteEntry(id) {
   await chrome.storage.sync.set({ [STORAGE_KEY]: store });
 }
 
-function normalizeShortcutDisplay(shortcut) {
-  if (!shortcut || typeof shortcut !== 'string') return 'Ctrl+Alt+L';
+function normalizeShortcutDisplay(shortcut, fallback = 'Ctrl+Alt+L') {
+  if (!shortcut || typeof shortcut !== 'string') return fallback;
   const parts = shortcut.split('+').map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 2) return 'Ctrl+Alt+L';
+  if (parts.length < 2) return fallback;
   const last = parts[parts.length - 1];
   if (['Control', 'Ctrl', 'Shift', 'Alt', 'Meta'].includes(last)) {
-    return 'Ctrl+Alt+L';
+    return fallback;
   }
   return parts.join('+');
 }
@@ -221,6 +346,12 @@ function renderAddForm(pendingStore, container) {
       </span>
       <span id="store-pattern-hint" class="context-pattern-hint hidden">URL: use * for any characters, e.g. <code>*://*.google.com/*</code>. Or use a selector (e.g. <code>#id</code>) to match that field on any site.</span>
     </label>
+    <div class="settings-row store-shortcut-row">
+      <span class="settings-shortcut-label">Shortcut (optional)</span>
+      <button type="button" id="store-shortcut-btn" class="btn-settings-shortcut">Set…</button>
+      <button type="button" id="store-shortcut-clear" class="btn-settings-link">Clear</button>
+    </div>
+    <p id="store-shortcut-hint" class="settings-hint hidden">Press the keys for this value, or Esc to cancel.</p>
     <div class="store-actions">
       <button type="button" id="store-save">Save</button>
       <button type="button" id="store-cancel">Cancel</button>
@@ -300,6 +431,51 @@ function renderAddForm(pendingStore, container) {
   container._setKeyManuallyEdited = (v) => { keyManuallyEdited = v; };
   container._setUpdatingKeyProgrammatically = (v) => { updatingKeyProgrammatically = v; };
 
+  let addFormShortcut = '';
+  const storeShortcutBtn = document.getElementById('store-shortcut-btn');
+  const storeShortcutClear = document.getElementById('store-shortcut-clear');
+  const storeShortcutHint = document.getElementById('store-shortcut-hint');
+
+  function updateStoreShortcutDisplay() {
+    if (storeShortcutBtn) storeShortcutBtn.textContent = addFormShortcut ? normalizeShortcutDisplay(addFormShortcut, 'Ctrl+Alt+1') : 'Set…';
+  }
+
+  if (storeShortcutBtn && storeShortcutHint) {
+    storeShortcutBtn.addEventListener('click', () => {
+      if (!storeShortcutHint.classList.contains('hidden')) return;
+      storeShortcutHint.classList.remove('hidden');
+      const onKeyDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', onKeyDown, true);
+          storeShortcutHint.classList.add('hidden');
+          return;
+        }
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.altKey) parts.push('Alt');
+        if (e.metaKey) parts.push('Meta');
+        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        if (!parts.length) return;
+        parts.push(key);
+        addFormShortcut = parts.join('+');
+        document.removeEventListener('keydown', onKeyDown, true);
+        storeShortcutHint.classList.add('hidden');
+        updateStoreShortcutDisplay();
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+    });
+  }
+  if (storeShortcutClear) {
+    storeShortcutClear.addEventListener('click', () => {
+      addFormShortcut = '';
+      updateStoreShortcutDisplay();
+    });
+  }
+
   document.getElementById('store-cancel').addEventListener('click', async () => {
     chrome.runtime.sendMessage({ type: 'cancelPickElement' }).catch(() => {});
     setAimModeActive(false);
@@ -318,6 +494,20 @@ function renderAddForm(pendingStore, container) {
     const contextType = typeSelectEl?.value ?? 'domain';
     let contextKey = keyInputEl?.value.trim();
     if (!contextKey && pageInfo) contextKey = buildContextKey(contextType, pageInfo);
+    if (addFormShortcut) {
+      const inUse = await getShortcutsInUse(null);
+      if (inUse.has(normalizeShortcutForComparison(addFormShortcut))) {
+        await showModal({
+          titleId: 'shortcut-collision-title',
+          title: 'Shortcut already in use',
+          bodyHtml: `Shortcut <strong>${escapeHtml(normalizeShortcutDisplay(addFormShortcut, addFormShortcut))}</strong> is already used by another value. Choose a different shortcut or clear it.`,
+          buttons: [
+            { label: 'OK', value: 'ok' },
+          ],
+        });
+        return;
+      }
+    }
     const now = Date.now();
     await saveEntry({
       id: uuid(),
@@ -325,6 +515,7 @@ function renderAddForm(pendingStore, container) {
       label: labelVal,
       contextType,
       contextKey: contextKey || '*',
+      shortcut: addFormShortcut || undefined,
       createdAt: now,
       order: now,
     });
@@ -413,12 +604,20 @@ async function doRender(state) {
       li.className = 'entry-item';
       li.dataset.entryId = entry.id;
       li.dataset.sectionKey = key;
-      const base = entry.label || entry.value || '';
+      const hasLabel = entry.label != null && String(entry.label).trim() !== '';
+      const base = hasLabel
+        ? entry.label
+        : (entry.value != null && String(entry.value) !== '' ? `"${entry.value}"` : '"(empty value)"');
       const preview = base.length > 36 ? base.slice(0, 33) + '…' : base;
+      const shortcutDisplay = entry.shortcut && String(entry.shortcut).trim()
+        ? ` <span class="entry-shortcut">(${escapeHtml(normalizeShortcutDisplay(entry.shortcut, entry.shortcut))})</span>`
+        : '';
       li.innerHTML = `
         <div class="entry-row" data-entry-id="${escapeHtml(entry.id)}">
           <span class="drag-handle" title="Drag to reorder">${ICON_DRAG}</span>
-          <span class="value-preview" title="${escapeHtml(entry.value)}">${escapeHtml(preview)}</span>
+          <span class="entry-label-wrap">
+            <span class="value-preview" title="${escapeHtml(entry.value)}">${escapeHtml(preview)}</span>${shortcutDisplay}
+          </span>
           <div class="entry-actions">
             <button type="button" class="icon-btn-item apply-icon-btn" title="Apply">${ICON_APPLY}</button>
             <button type="button" class="icon-btn-item edit-icon-btn" title="Edit">${ICON_EDIT}</button>
@@ -443,8 +642,17 @@ async function doRender(state) {
         e.stopPropagation();
         const label = entry.label || entry.value || 'this value';
         const short = String(label).slice(0, 40) + (String(label).length > 40 ? '…' : '');
-        if (!confirm(`Delete "${short}"?`)) return;
-        deleteEntry(entry.id).then(() => requestState());
+        showModal({
+          titleId: 'delete-confirm-title',
+          title: 'Delete value?',
+          bodyHtml: `Are you sure you want to remove "${escapeHtml(short)}"?`,
+          buttons: [
+            { label: 'Delete', value: 'delete' },
+            { label: 'Cancel', value: 'cancel' },
+          ],
+        }).then((choice) => {
+          if (choice === 'delete') deleteEntry(entry.id).then(() => requestState());
+        });
       });
       li.querySelector('.drag-handle').addEventListener('click', (e) => e.stopPropagation());
       setupDragAndDrop(li, entry, key, list);
@@ -566,12 +774,62 @@ function openEditForm(li, entry) {
       </span>
       <span class="edit-pattern-hint context-pattern-hint ${entry.contextType === 'urlPattern' ? '' : 'hidden'}">URL: use * for any characters, e.g. <code>*://*.google.com/*</code>. Or use a selector (e.g. <code>#id</code>) to match that field on any site.</span>
     </label>
+    <div class="settings-row store-shortcut-row">
+      <span class="settings-shortcut-label">Shortcut (optional)</span>
+      <button type="button" class="edit-shortcut-btn btn-settings-shortcut">${entry.shortcut ? normalizeShortcutDisplay(entry.shortcut, 'Ctrl+Alt+1') : 'Set…'}</button>
+      <button type="button" class="edit-shortcut-clear btn-settings-link">Clear</button>
+    </div>
+    <p class="edit-shortcut-hint settings-hint hidden">Press the keys for this value, or Esc to cancel.</p>
     <div class="store-actions">
       <button type="button" class="edit-save-btn">Save</button>
       <button type="button" class="edit-cancel-btn">Cancel</button>
     </div>
   `;
   li.appendChild(formWrap);
+  let editFormShortcut = entry.shortcut ? String(entry.shortcut).trim() : '';
+  const editShortcutBtn = formWrap.querySelector('.edit-shortcut-btn');
+  const editShortcutClear = formWrap.querySelector('.edit-shortcut-clear');
+  const editShortcutHint = formWrap.querySelector('.edit-shortcut-hint');
+
+  function updateEditShortcutDisplay() {
+    if (editShortcutBtn) editShortcutBtn.textContent = editFormShortcut ? normalizeShortcutDisplay(editFormShortcut, 'Ctrl+Alt+1') : 'Set…';
+  }
+
+  if (editShortcutBtn && editShortcutHint) {
+    editShortcutBtn.addEventListener('click', () => {
+      if (!editShortcutHint.classList.contains('hidden')) return;
+      editShortcutHint.classList.remove('hidden');
+      const onKeyDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', onKeyDown, true);
+          editShortcutHint.classList.add('hidden');
+          return;
+        }
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.altKey) parts.push('Alt');
+        if (e.metaKey) parts.push('Meta');
+        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        if (!parts.length) return;
+        parts.push(key);
+        editFormShortcut = parts.join('+');
+        document.removeEventListener('keydown', onKeyDown, true);
+        editShortcutHint.classList.add('hidden');
+        updateEditShortcutDisplay();
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+    });
+  }
+  if (editShortcutClear) {
+    editShortcutClear.addEventListener('click', () => {
+      editFormShortcut = '';
+      updateEditShortcutDisplay();
+    });
+  }
   const aimBtn = formWrap.querySelector('.edit-aim-btn');
   const typeSelect = formWrap.querySelector('.edit-context-type');
   const editKeyInput = formWrap.querySelector('.edit-context-key');
@@ -640,7 +898,27 @@ function openEditForm(li, entry) {
     const contextType = formWrap.querySelector('.edit-context-type').value;
     let contextKey = formWrap.querySelector('.edit-context-key').value.trim();
     if (!contextKey && pageInfo) contextKey = buildContextKey(contextType, pageInfo);
-    await updateEntry(entry.id, { value, label, contextType, contextKey: contextKey || '*' });
+    if (editFormShortcut) {
+      const inUse = await getShortcutsInUse(entry.id);
+      if (inUse.has(normalizeShortcutForComparison(editFormShortcut))) {
+        await showModal({
+          titleId: 'shortcut-collision-title',
+          title: 'Shortcut already in use',
+          bodyHtml: `Shortcut <strong>${escapeHtml(normalizeShortcutDisplay(editFormShortcut, editFormShortcut))}</strong> is already used by another value. Choose a different shortcut or clear it.`,
+          buttons: [
+            { label: 'OK', value: 'ok' },
+          ],
+        });
+        return;
+      }
+    }
+    await updateEntry(entry.id, {
+      value,
+      label,
+      contextType,
+      contextKey: contextKey || '*',
+      shortcut: editFormShortcut || undefined,
+    });
     formWrap.remove();
     if (row) row.classList.remove('hidden');
     requestState();
@@ -659,6 +937,7 @@ function applySettingsToUi() {
   const showIconCheckbox = document.getElementById('setting-show-icon');
   const showIconPageCheckbox = document.getElementById('setting-show-icon-page');
   const shortcutDisplay = document.getElementById('shortcut-display');
+  const shortcutPanelDisplay = document.getElementById('shortcut-panel-display');
   if (!currentSettings) return;
   if (showIconCheckbox) {
     showIconCheckbox.checked = !!currentSettings.showFieldIcon;
@@ -668,6 +947,9 @@ function applySettingsToUi() {
   }
   if (shortcutDisplay) {
     shortcutDisplay.textContent = normalizeShortcutDisplay(currentSettings.shortcutOpenMenu);
+  }
+  if (shortcutPanelDisplay) {
+    shortcutPanelDisplay.textContent = normalizeShortcutDisplay(currentSettings.shortcutOpenPanel, 'Ctrl+Alt+K');
   }
 }
 
@@ -761,17 +1043,37 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Invalid format: expected { entries: [...] }');
             return;
           }
-          await chrome.storage.sync.set({ [STORAGE_KEY]: { version: parsed.version ?? 1, entries: parsed.entries } });
-          requestState();
+          const current = await getStore();
+          const existingEntries = current?.entries || [];
+          const importedEntries = parsed.entries;
+
+          if (existingEntries.length === 0) {
+            await applyImport(current, importedEntries, parsed.version, false);
+            requestState();
+            return;
+          }
+
+          showImportChoiceModal(existingEntries.length, importedEntries.length, async (choice) => {
+            if (choice === 'cancel') return;
+            await applyImport(current, importedEntries, parsed.version, choice === 'merge');
+            requestState();
+          });
         } catch (err) {
-          alert('Invalid JSON: ' + err.message);
+          await showModal({
+            titleId: 'values-import-json-title',
+            title: 'Invalid JSON',
+            bodyHtml: `Could not parse values JSON: <code>${escapeHtml(err.message || String(err))}</code>`,
+            buttons: [
+              { label: 'OK', value: 'ok' },
+            ],
+          });
         }
       };
       input.click();
     });
   }
 
-  const SETTINGS_KEYS = ['showFieldIcon', 'showIconOnPageValues', 'shortcutOpenMenu'];
+  const SETTINGS_KEYS = ['showFieldIcon', 'showIconOnPageValues', 'shortcutOpenMenu', 'shortcutOpenPanel'];
   const exportSettingsBtn = document.getElementById('export-settings-btn');
   const importSettingsBtn = document.getElementById('import-settings-btn');
   if (exportSettingsBtn) {
@@ -806,7 +1108,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (raw[k] !== undefined) toApply[k] = raw[k];
           });
           if (Object.keys(toApply).length === 0) {
-            alert('Invalid format: expected { settings: { ... } } or settings object with showFieldIcon, shortcutOpenMenu, etc.');
+            await showModal({
+              titleId: 'settings-import-invalid-title',
+              title: 'Invalid settings file',
+              bodyHtml: 'Invalid format: expected <code>{ settings: { ... } }</code> or a settings object with <code>showFieldIcon</code>, <code>shortcutOpenMenu</code>, etc.',
+              buttons: [
+                { label: 'OK', value: 'ok' },
+              ],
+            });
             return;
           }
           const next = await saveSettingsFromPanel(toApply);
@@ -815,7 +1124,14 @@ document.addEventListener('DOMContentLoaded', () => {
             applySettingsToUi();
           }
         } catch (err) {
-          alert('Invalid JSON: ' + err.message);
+          await showModal({
+            titleId: 'settings-import-json-title',
+            title: 'Invalid JSON',
+            bodyHtml: `Could not parse settings JSON: <code>${escapeHtml(err.message || String(err))}</code>`,
+            buttons: [
+              { label: 'OK', value: 'ok' },
+            ],
+          });
         }
       };
       input.click();
@@ -890,6 +1206,56 @@ document.addEventListener('DOMContentLoaded', () => {
   if (shortcutResetBtn) {
     shortcutResetBtn.addEventListener('click', async () => {
       const next = await saveSettingsFromPanel({ shortcutOpenMenu: 'Ctrl+Alt+L' });
+      if (next) {
+        currentSettings = next;
+        applySettingsToUi();
+      }
+    });
+  }
+
+  const shortcutPanelEditBtn = document.getElementById('shortcut-panel-edit-btn');
+  const shortcutPanelResetBtn = document.getElementById('shortcut-panel-reset-btn');
+  const shortcutPanelHint = document.getElementById('shortcut-panel-hint');
+
+  if (shortcutPanelEditBtn && shortcutPanelHint) {
+    shortcutPanelEditBtn.addEventListener('click', () => {
+      if (!shortcutPanelHint.classList.contains('hidden')) return;
+      shortcutPanelHint.classList.remove('hidden');
+      const onKeyDown = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', onKeyDown, true);
+          shortcutPanelHint.classList.add('hidden');
+          return;
+        }
+        if (e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta') {
+          return;
+        }
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.altKey) parts.push('Alt');
+        if (e.metaKey) parts.push('Meta');
+        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        if (!parts.length) return;
+        parts.push(key);
+        const shortcut = parts.join('+');
+        document.removeEventListener('keydown', onKeyDown, true);
+        shortcutPanelHint.classList.add('hidden');
+        const next = await saveSettingsFromPanel({ shortcutOpenPanel: shortcut });
+        if (next) {
+          currentSettings = next;
+          applySettingsToUi();
+        }
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+    });
+  }
+
+  if (shortcutPanelResetBtn) {
+    shortcutPanelResetBtn.addEventListener('click', async () => {
+      const next = await saveSettingsFromPanel({ shortcutOpenPanel: 'Ctrl+Alt+K' });
       if (next) {
         currentSettings = next;
         applySettingsToUi();

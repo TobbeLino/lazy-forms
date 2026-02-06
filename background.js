@@ -26,6 +26,8 @@ const DEFAULT_SETTINGS = {
   // Keyboard shortcut used to open the floating menu on the focused field.
   // Stored as a human-readable string; content scripts normalize for matching.
   shortcutOpenMenu: 'Ctrl+Alt+L',
+  // Keyboard shortcut used to open the side panel.
+  shortcutOpenPanel: 'Ctrl+Alt+K',
 };
 
 // ============ STATE ============
@@ -57,6 +59,16 @@ function safeSendMessage(msg) {
     const msg = String(e?.message ?? e ?? '');
     if (!msg.includes('Extension context invalidated')) throw e;
   }
+}
+
+/** Update the extension toolbar icon tooltip to show the side panel shortcut. */
+function updateActionTitle(settings) {
+  if (!settings || typeof chrome.action?.setTitle !== 'function') return;
+  const shortcut = settings.shortcutOpenPanel && String(settings.shortcutOpenPanel).trim();
+  const title = shortcut ? `Lazy forms (${shortcut})` : 'Lazy forms';
+  try {
+    chrome.action.setTitle({ title });
+  } catch {}
 }
 
 // ============ STORAGE ============
@@ -332,10 +344,16 @@ function updateQuickSlots(matches) {
     if (!entry) {
       chrome.contextMenus.update(menuId, { visible: false }).catch(() => {});
     } else {
-      const raw = entry.label || entry.value || '';
+      const hasLabel = entry.label != null && String(entry.label).trim() !== '';
+      const raw = hasLabel
+        ? String(entry.label).trim()
+        : (entry.value != null && String(entry.value) !== '' ? `"${entry.value}"` : '"(empty value)"');
       const base = raw.length > 32 ? `${raw.slice(0, 29)}…` : raw;
-      const title = base ? `"${base}"` : '"(empty value)"';
-      chrome.contextMenus.update(menuId, { visible: true, title }).catch(() => {});
+      const withShortcut =
+        entry.shortcut && String(entry.shortcut).trim()
+          ? `${base} (${String(entry.shortcut).trim()})`
+          : base;
+      chrome.contextMenus.update(menuId, { visible: true, title: withShortcut }).catch(() => {});
     }
   }
 }
@@ -617,6 +635,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Content script: toggle side panel via keyboard shortcut (no pre-fill)
+  if (message.type === 'toggleSidePanel' && sender.tab?.id) {
+    const tabId = sender.tab.id;
+    if (sidePanelOpenTabId === tabId) {
+      chrome.runtime.sendMessage({ type: 'requestClosePanel' }, (response) => {
+        if (response?.closing) sidePanelOpenTabId = null;
+      });
+    } else {
+      try {
+        chrome.sidePanel.open({ tabId, windowId: sender.tab.windowId });
+        sidePanelOpenTabId = tabId;
+      } catch {}
+    }
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
   // Content script: open side panel for "Add value…" from floating menu (pre-fill with current field)
   if (message.type === 'openSidePanelForAdd' && sender.tab?.id) {
     const tabId = sender.tab.id;
@@ -658,10 +693,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Content script: get key combos used by entry shortcuts (for synchronous "should we handle this key?")
+  if (message.type === 'getEntryShortcuts') {
+    (async () => {
+      const { entries } = await loadStorage();
+      const keyCombos = (entries || [])
+        .filter((e) => e.shortcut && String(e.shortcut).trim())
+        .map((e) => String(e.shortcut).trim().toLowerCase());
+      sendResponse?.({ ok: true, keyCombos: [...new Set(keyCombos)] });
+    })();
+    return true;
+  }
+
+  // Content script: key combo pressed on page; return matching entry for current context or nothing
+  if (message.type === 'shortcutPressed' && sender.tab?.id) {
+    (async () => {
+      const keyCombo = message.keyCombo && String(message.keyCombo).trim().toLowerCase();
+      const pageInfo = message.pageInfo;
+      if (!keyCombo || !pageInfo) {
+        sendResponse?.({ ok: false });
+        return;
+      }
+      const { entries } = await loadStorage();
+      const withShortcut = (entries || []).filter(
+        (e) => e.shortcut && String(e.shortcut).trim().toLowerCase() === keyCombo
+      );
+      const matching = getMatchingEntries(withShortcut, pageInfo);
+      const sorted = sortBySpecificity(matching);
+      const entry = sorted[0] || null;
+      sendResponse?.({ ok: true, entry });
+    })();
+    return true;
+  }
+
   // Any script: request current settings (with defaults applied)
   if (message.type === 'getSettings') {
     (async () => {
       const { settings } = await loadStorage();
+      updateActionTitle(settings);
       sendResponse?.({ ok: true, settings });
     })();
     return true;
@@ -671,6 +740,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'updateSettings') {
     (async () => {
       const merged = await saveSettings(message.settings || {});
+
+      updateActionTitle(merged);
 
       // Notify sidepanel and any other extension pages
       safeSendMessage({ type: 'settingsUpdated', settings: merged });

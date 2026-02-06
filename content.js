@@ -160,6 +160,8 @@ function ensureFieldButton(el) {
     btn.id = FIELD_BUTTON_ID;
     btn.type = 'button';
     btn.setAttribute('aria-label', 'Show lazy forms values');
+    const menuShortcut = lazyFormsSettings?.shortcutOpenMenu && String(lazyFormsSettings.shortcutOpenMenu).trim();
+    btn.title = menuShortcut ? `Lazy values (${menuShortcut})` : 'Lazy values';
     btn.textContent = '≡';
     btn.style.position = 'fixed';
     btn.style.zIndex = '2147483647';
@@ -239,6 +241,10 @@ function ensureFieldButton(el) {
 
     document.body.appendChild(btn);
   }
+  // Keep tooltip in sync with current shortcut (button may be reused after settings change)
+  const menuShortcut = lazyFormsSettings?.shortcutOpenMenu && String(lazyFormsSettings.shortcutOpenMenu).trim();
+  btn.title = menuShortcut ? `Lazy values (${menuShortcut})` : 'Lazy values';
+
   startFieldButtonResizeObserving(el);
   positionFieldButton();
 }
@@ -282,6 +288,7 @@ let lazyFormsSettings = {
   showFieldIcon: true,
   showIconOnPageValues: false,
   shortcutOpenMenu: 'Ctrl+Alt+L',
+  shortcutOpenPanel: 'Ctrl+Alt+K',
 };
 
 function updateSettingsFromBackground(newSettings) {
@@ -299,6 +306,16 @@ function updateSettingsFromBackground(newSettings) {
     }
   } else {
     merged.shortcutOpenMenu = 'Ctrl+Alt+L';
+  }
+  // Same validation for panel shortcut
+  if (merged.shortcutOpenPanel && typeof merged.shortcutOpenPanel === 'string') {
+    const parts = merged.shortcutOpenPanel.split('+').map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (!last || ['Control', 'Ctrl', 'Shift', 'Alt', 'Meta'].includes(last)) {
+      merged.shortcutOpenPanel = 'Ctrl+Alt+K';
+    }
+  } else {
+    merged.shortcutOpenPanel = 'Ctrl+Alt+K';
   }
   lazyFormsSettings = merged;
 }
@@ -319,6 +336,31 @@ function matchesConfiguredShortcut(e) {
   const actual = normalizeEventToShortcut(e);
   return actual.toLowerCase() === String(lazyFormsSettings.shortcutOpenMenu).toLowerCase();
 }
+
+function matchesPanelShortcut(e) {
+  if (!lazyFormsSettings || !lazyFormsSettings.shortcutOpenPanel) return false;
+  const actual = normalizeEventToShortcut(e);
+  return actual.toLowerCase() === String(lazyFormsSettings.shortcutOpenPanel).toLowerCase();
+}
+
+// Entry shortcuts: key combos assigned to individual stored values
+let entryShortcutKeyCombos = new Set();
+
+function refreshEntryShortcuts() {
+  try {
+    chrome.runtime.sendMessage({ type: 'getEntryShortcuts' }, (response) => {
+      if (response?.ok && Array.isArray(response.keyCombos)) {
+        entryShortcutKeyCombos = new Set(response.keyCombos);
+      }
+    });
+  } catch {}
+}
+
+chrome.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName === 'sync' && changes?.lazyForms) {
+    refreshEntryShortcuts();
+  }
+});
 
 document.addEventListener(
   'contextmenu',
@@ -355,38 +397,65 @@ document.addEventListener(
   true
 );
 
-// Initial settings load
+// Initial settings load and entry shortcuts
 try {
   chrome.runtime.sendMessage({ type: 'getSettings' }, (response) => {
     if (!response?.ok) return;
     updateSettingsFromBackground(response.settings || {});
   });
 } catch {}
+refreshEntryShortcuts();
 
-// Keyboard shortcut: open floating menu for focused field
+// Keyboard shortcuts: side panel, entry shortcuts, or floating menu
 document.addEventListener(
   'keydown',
   (e) => {
-    if (!matchesConfiguredShortcut(e)) return;
+    if (matchesPanelShortcut(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        chrome.runtime.sendMessage({ type: 'toggleSidePanel' }).catch?.(() => {});
+      } catch {}
+      return;
+    }
+
     const el = document.activeElement;
     if (!el || !isEditableFormField(el)) return;
+
+    const keyCombo = normalizeEventToShortcut(e).toLowerCase();
+    const isEntryShortcut = entryShortcutKeyCombos.has(keyCombo);
+    const isMenuShortcut = matchesConfiguredShortcut(e);
+
+    if (!isEntryShortcut && !isMenuShortcut) return;
+
     e.preventDefault();
     e.stopPropagation();
     lastRightClickedElement = el;
     const selector = getStableSelector(el);
+    const pageInfo = {
+      url: location.href,
+      origin: location.origin,
+      pathname: location.pathname,
+      selector,
+    };
+
+    if (isEntryShortcut) {
+      chrome.runtime.sendMessage(
+        { type: 'shortcutPressed', keyCombo, pageInfo },
+        (reply) => {
+          if (reply?.ok && reply.entry) {
+            setFieldValue(el, reply.entry.value ?? '');
+          }
+        }
+      ).catch?.(() => {});
+      return;
+    }
+
     const rect = el.getBoundingClientRect();
     const position = { x: rect.right, y: rect.bottom };
     try {
       chrome.runtime.sendMessage(
-        {
-          type: 'getFloatingMenuSections',
-          pageInfo: {
-            url: location.href,
-            origin: location.origin,
-            pathname: location.pathname,
-            selector,
-          },
-        },
+        { type: 'getFloatingMenuSections', pageInfo },
         (reply) => {
           if (!reply || !reply.ok) return;
           showFloatingMenu(reply.sections || {}, position);
@@ -503,6 +572,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === 'settingsUpdated') {
     updateSettingsFromBackground(message.settings || {});
+    const existingBtn = document.getElementById(FIELD_BUTTON_ID);
+    if (existingBtn) {
+      const menuShortcut = lazyFormsSettings?.shortcutOpenMenu && String(lazyFormsSettings.shortcutOpenMenu).trim();
+      existingBtn.title = menuShortcut ? `Lazy values (${menuShortcut})` : 'Lazy values';
+    }
     if (!lazyFormsSettings.showFieldIcon && !lazyFormsSettings.showIconOnPageValues) {
       hideFieldButton();
     } else {
@@ -831,6 +905,16 @@ function showFloatingMenu(sectionsOrEntries, position) {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    #lazy-forms-floating-menu [role="menuitem"] .lazy-forms-floater-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #lazy-forms-floating-menu [role="menuitem"] .lazy-forms-floater-shortcut {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #888;
+    }
     #lazy-forms-floating-menu [role="menuitem"]:hover {
       background: #f0f0f0;
     }
@@ -861,6 +945,11 @@ function showFloatingMenu(sectionsOrEntries, position) {
     #lazy-forms-floating-menu .add-value-link:hover {
       background: #f0f0f0;
     }
+    #lazy-forms-floating-menu .add-value-link .lazy-forms-floater-shortcut {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #888;
+    }
   `;
   document.head.appendChild(style);
 
@@ -875,8 +964,27 @@ function showFloatingMenu(sectionsOrEntries, position) {
     const btn = document.createElement('button');
     btn.setAttribute('role', 'menuitem');
     btn.type = 'button';
-    const label = entry.label || entry.value;
-    btn.textContent = label.length > 48 ? label.slice(0, 45) + '…' : label;
+    const hasLabel = entry.label != null && String(entry.label).trim() !== '';
+    const displayText = hasLabel
+      ? entry.label
+      : (entry.value != null && String(entry.value) !== '' ? `"${entry.value}"` : '"(empty value)"');
+    const hasShortcut = entry.shortcut && String(entry.shortcut).trim();
+    if (hasShortcut) {
+      btn.style.display = 'flex';
+      btn.style.alignItems = 'center';
+      btn.style.gap = '6px';
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'lazy-forms-floater-label';
+      const truncated = displayText.length > 36 ? displayText.slice(0, 33) + '…' : displayText;
+      labelSpan.textContent = truncated;
+      const shortcutSpan = document.createElement('span');
+      shortcutSpan.className = 'lazy-forms-floater-shortcut';
+      shortcutSpan.textContent = `(${entry.shortcut})`;
+      btn.appendChild(labelSpan);
+      btn.appendChild(shortcutSpan);
+    } else {
+      btn.textContent = displayText.length > 48 ? displayText.slice(0, 45) + '…' : displayText;
+    }
     btn.title = entry.value;
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -945,10 +1053,53 @@ function showFloatingMenu(sectionsOrEntries, position) {
   container.appendChild(addLink);
   items.push(addLink);
 
+  const panelLink = document.createElement('a');
+  panelLink.className = 'add-value-link';
+  panelLink.href = '#';
+  panelLink.style.display = 'flex';
+  panelLink.style.alignItems = 'center';
+  panelLink.style.gap = '6px';
+  const panelShortcut = lazyFormsSettings?.shortcutOpenPanel && String(lazyFormsSettings.shortcutOpenPanel).trim();
+  if (panelShortcut) {
+    panelLink.appendChild(document.createTextNode('Side panel…'));
+    const panelShortcutSpan = document.createElement('span');
+    panelShortcutSpan.className = 'lazy-forms-floater-shortcut';
+    panelShortcutSpan.textContent = `(${panelShortcut})`;
+    panelLink.appendChild(panelShortcutSpan);
+  } else {
+    panelLink.textContent = 'Side panel…';
+  }
+  panelLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+    try {
+      chrome.runtime.sendMessage({ type: 'openSidePanelForAdd' }).catch(() => {});
+    } catch {}
+  });
+  container.appendChild(panelLink);
+  items.push(panelLink);
+
   container.style.left = `${position.x}px`;
   container.style.top = `${position.y}px`;
 
   document.body.appendChild(container);
+
+  // Clamp to viewport so the menu is not cut off when the field is near the edge
+  const menuRect = container.getBoundingClientRect();
+  const padding = 8;
+  let left = position.x;
+  let top = position.y;
+  if (left + menuRect.width > window.innerWidth - padding) {
+    left = window.innerWidth - menuRect.width - padding;
+  }
+  if (left < padding) left = padding;
+  if (top + menuRect.height > window.innerHeight - padding) {
+    top = window.innerHeight - menuRect.height - padding;
+  }
+  if (top < padding) top = padding;
+  container.style.left = `${left}px`;
+  container.style.top = `${top}px`;
 
   // Remember which field this menu belongs to (for icon-toggle behavior)
   currentFloatingMenuField = lastRightClickedElement || null;

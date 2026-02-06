@@ -43,12 +43,12 @@
       <button type="button" id="export-btn" class="btn-settings">Export</button>
       <button type="button" id="import-btn" class="btn-settings">Import</button>
     </div>
-<!--     <div class="settings-actions">
-      <span class="settings-actions-label">Settings:</span>
+    <div class="settings-actions">
+      <span class="settings-actions-label">Import/Export settings:</span>
       <button type="button" id="export-settings-btn" class="btn-settings">Export</button>
       <button type="button" id="import-settings-btn" class="btn-settings">Import</button>
     </div>
- -->    <div class="settings-section">
+    <div class="settings-section">
       <label class="settings-row">
         <input type="checkbox" id="setting-show-icon">
         <span>Show icon on matching input elements</span>
@@ -65,6 +65,14 @@
         <button type="button" id="shortcut-reset-btn" class="btn-settings-link">Reset</button>
       </div>
       <p id="shortcut-hint" class="settings-hint hidden">Press the keys you want to use, or Esc to cancel.</p>
+      <div class="settings-row">
+        <div class="settings-shortcut-label">Shortcut for side panel</div>
+        <button type="button" id="shortcut-panel-edit-btn" class="btn-settings-shortcut" aria-label="Change keyboard shortcut">
+          <span id="shortcut-panel-display">Ctrl+Alt+K</span>
+        </button>
+        <button type="button" id="shortcut-panel-reset-btn" class="btn-settings-link">Reset</button>
+      </div>
+      <p id="shortcut-panel-hint" class="settings-hint hidden">Press the keys you want to use, or Esc to cancel.</p>
     </div>
     <button type="button" id="settings-back-btn" class="btn-settings btn-back">
       <svg class="btn-back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>

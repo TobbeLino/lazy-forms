@@ -299,12 +299,27 @@ body.is-dragging .entries-list .entry-row .entry-actions * {
   background: #f9f9f9;
 }
 
-.entries-list li .value-preview {
+.entries-list li .entry-label-wrap {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.entries-list li .value-preview {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.entries-list li .entry-shortcut {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #888;
+  margin-left: 6px;
 }
 
 .entries-list li .entry-actions {
