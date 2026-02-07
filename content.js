@@ -124,7 +124,11 @@ function positionFieldButton() {
     return;
   }
   const size = 18;
-  const top = rect.top + (rect.height - size) / 2;
+  // Top-align for textareas (multi-line); vertically center for single-line inputs
+  const top =
+    fieldButtonTarget.tagName === 'TEXTAREA'
+      ? rect.top + 6
+      : rect.top + (rect.height - size) / 2;
   // Use visible right edge so we don't place the icon past overflow:hidden/clip containers (e.g. Jira)
   let visibleRight = getVisibleRightEdge(fieldButtonTarget);
   // Account for field's padding-right (e.g. textareas) so the icon sits at the content edge, not over the padding
