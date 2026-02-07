@@ -84,10 +84,18 @@ let lastHoveredSelector = null;
 const FIELD_BUTTON_ID = 'lazy-forms-field-button';
 let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
+
 /** When true, do not reposition the icon (e.g. while user has mouse down on it, so Jira spinner can't steal the click). */
 let fieldButtonPositionFrozen = false;
+
+/** Menu position and mouse fallback captured on icon mousedown (before page may hide the input). */
+let pendingMenuPosition = null;
+let pendingMenuMouseX = 0;
+let pendingMenuMouseY = 0;
+
 // Track which field the current floating menu belongs to (if any)
 let currentFloatingMenuField = null;
+
 /** Right edge of the visible (clipped) area for el. Only clamp when the field actually overflows its container. */
 function getVisibleRightEdge(el) {
   const rect = el.getBoundingClientRect();
@@ -152,6 +160,33 @@ function startFieldButtonResizeObserving(el) {
   }
 }
 
+const stopEventAndReturnFocus = (e, focusEl) => {
+  // IMPORTANT: capture phase, non-passive, stopImmediatePropagation
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+
+  // Keep/restore focus synchronously
+  // (preventDefault should already stop focus change, but some pages blur manually, so refocus anyway)
+  focusEl?.focus?.({ preventScroll: true });
+};
+
+function attachClickNoFocus(el, focusEl, fn) {
+  el.addEventListener('click', (e) => {
+    stopEventAndReturnFocus(e, focusEl);
+    if (typeof fn === 'function') {
+      fn(e);
+    }
+  }, { capture: true, passive: false });
+
+  // Block mousedown/mouseup so the page doesn't blur the field before click
+  const killEventAndReturnFocus = (e) => {
+    stopEventAndReturnFocus(e, focusEl);
+  };
+  el.addEventListener('mousedown', killEventAndReturnFocus, true);
+  el.addEventListener('mouseup', killEventAndReturnFocus, true);
+}
+
 function ensureFieldButton(el) {
   fieldButtonTarget = el;
   let btn = document.getElementById(FIELD_BUTTON_ID);
@@ -181,11 +216,23 @@ function ensureFieldButton(el) {
     btn.style.lineHeight = '1';
     btn.style.boxShadow = '0 0 0 1px #fff, 0 2px 4px rgba(0,0,0,0.2)';
 
-    // Freeze position on mousedown so sites (e.g. Jira) that change layout on click don't move the icon before click fires
-    btn.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      fieldButtonPositionFrozen = true;
-    });
+    // Capture menu position and mouse coords here while the input is still in the DOM.
+    btn.addEventListener('pointerdown', (e) => {
+        stopEventAndReturnFocus(e, fieldButtonTarget);
+        fieldButtonPositionFrozen = true;
+        pendingMenuMouseX = e.clientX;
+        pendingMenuMouseY = e.clientY;
+        if (fieldButtonTarget) {
+          const rect = fieldButtonTarget.getBoundingClientRect();
+          if (rect && rect.width > 0 && rect.height > 0) {
+            pendingMenuPosition = { x: rect.right, y: rect.bottom };
+          } else {
+            pendingMenuPosition = null;
+          }
+        } else {
+          pendingMenuPosition = null;
+        }
+    }, { capture: true, passive: false });
 
     // Keyboard handling when the icon itself has focus
     btn.addEventListener('keydown', (e) => {
@@ -199,9 +246,7 @@ function ensureFieldButton(el) {
       }
     });
 
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    attachClickNoFocus(btn, fieldButtonTarget, () => {
       const target = fieldButtonTarget;
       if (!target) return;
       // Toggle behavior:
@@ -216,8 +261,12 @@ function ensureFieldButton(el) {
 
       lastRightClickedElement = target;
       const selector = getStableSelector(target);
-      const rect = target.getBoundingClientRect();
-      const position = { x: rect.right, y: rect.bottom };
+      // Use position captured on mousedown (before page may hide the input). Fallback to mouse position.
+      const position =
+        pendingMenuPosition && (pendingMenuPosition.x !== 0 || pendingMenuPosition.y !== 0)
+          ? { ...pendingMenuPosition }
+          : { x: pendingMenuMouseX, y: pendingMenuMouseY };
+      pendingMenuPosition = null;
       try {
         chrome.runtime.sendMessage(
           {
@@ -230,11 +279,16 @@ function ensureFieldButton(el) {
             },
           },
           (reply) => {
-            if (!reply || !reply.ok) return;
-            showFloatingMenu(reply.sections || {}, position);
+            if (!reply || !reply.ok) {
+              pendingMenuPosition = null;
+              return;
+            }
+            // Show menu without focusing on mouse click
+            showFloatingMenu(reply.sections || {}, position, true);
           }
-        ).catch?.(() => {});
+        ).catch?.(() => { pendingMenuPosition = null; });
       } catch {
+        pendingMenuPosition = null;
         // ignore errors (e.g. extension context invalidated)
       }
     });
@@ -528,12 +582,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return true;
     }
     setFieldValue(el, v);
-    sendResponse({ ok: true });
-    return true;
-  }
-
-  if (message.type === 'showFloatingMenu') {
-    showFloatingMenu(message.entries ?? [], message.position ?? { x: lastContextMenuX, y: lastContextMenuY });
     sendResponse({ ok: true });
     return true;
   }
@@ -869,7 +917,7 @@ function clearPageHighlight() {
  * @param {{ field?: unknown[], url?: unknown[], domain?: unknown[], custom?: unknown[], all?: unknown[] } | unknown[]} sectionsOrEntries
  * @param {{ x: number, y: number }} position
  */
-function showFloatingMenu(sectionsOrEntries, position) {
+function showFloatingMenu(sectionsOrEntries, position, noFocus = false) {
   removeExistingFloatingMenu();
 
   const container = document.createElement('div');
@@ -986,8 +1034,8 @@ function showFloatingMenu(sectionsOrEntries, position) {
       btn.textContent = displayText.length > 48 ? displayText.slice(0, 45) + '…' : displayText;
     }
     btn.title = entry.value;
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
+
+    attachClickNoFocus(btn, lastRightClickedElement, () => {
       if (lastRightClickedElement) {
         setFieldValue(lastRightClickedElement, entry.value ?? '');
       }
@@ -1031,9 +1079,7 @@ function showFloatingMenu(sectionsOrEntries, position) {
   addLink.className = 'add-value-link';
   addLink.href = '#';
   addLink.textContent = 'Add value…';
-  addLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+  attachClickNoFocus(addLink, lastRightClickedElement, () => {
     close();
     if (lastRightClickedElement) {
       try {
@@ -1069,9 +1115,8 @@ function showFloatingMenu(sectionsOrEntries, position) {
   } else {
     panelLink.textContent = 'Side panel…';
   }
-  panelLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+
+  attachClickNoFocus(panelLink, lastRightClickedElement, () => {
     close();
     try {
       chrome.runtime.sendMessage({ type: 'openSidePanelForAdd' }).catch(() => {});
@@ -1104,8 +1149,8 @@ function showFloatingMenu(sectionsOrEntries, position) {
   // Remember which field this menu belongs to (for icon-toggle behavior)
   currentFloatingMenuField = lastRightClickedElement || null;
 
-  // Focus first item when opened so it is keyboard navigable (especially when opened via shortcut)
-  if (items.length > 0) {
+  // Focus first item (if not noFocus) when opened so it is keyboard navigable (especially when opened via shortcut)
+  if (!noFocus && items.length > 0) {
     try {
       items[0].focus();
     } catch {}
