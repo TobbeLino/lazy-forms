@@ -229,7 +229,12 @@ function ensureFieldButton(el) {
         if (fieldButtonTarget) {
           const rect = fieldButtonTarget.getBoundingClientRect();
           if (rect && rect.width > 0 && rect.height > 0) {
-            pendingMenuPosition = { x: rect.right, y: rect.bottom };
+            // Match icon position: top-right for textareas, bottom-right for inputs
+            const y =
+              fieldButtonTarget.tagName === 'TEXTAREA'
+                ? rect.top + 6
+                : rect.bottom;
+            pendingMenuPosition = { x: rect.right, y };
           } else {
             pendingMenuPosition = null;
           }
@@ -510,7 +515,9 @@ document.addEventListener(
     }
 
     const rect = el.getBoundingClientRect();
-    const position = { x: rect.right, y: rect.bottom };
+    const menuY =
+      el.tagName === 'TEXTAREA' ? rect.top + 6 : rect.bottom;
+    const position = { x: rect.right, y: menuY };
     try {
       chrome.runtime.sendMessage(
         { type: 'getFloatingMenuSections', pageInfo },
