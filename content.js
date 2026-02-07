@@ -82,6 +82,8 @@ let lastHoveredSelector = null;
 
 // Inline field button for showing matches
 const FIELD_BUTTON_ID = 'lazy-forms-field-button';
+/** Fields shorter than this (px) get vertically centered; taller ones get top-aligned. */
+const FIELD_TOP_ALIGN_MIN_HEIGHT = 50;
 let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
 
@@ -124,9 +126,9 @@ function positionFieldButton() {
     return;
   }
   const size = 18;
-  // Top-align for textareas (multi-line); vertically center for single-line inputs
+  // Top-align for tall fields; center for short ones
   const top =
-    fieldButtonTarget.tagName === 'TEXTAREA'
+    rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
       ? rect.top + 6
       : rect.top + (rect.height - size) / 2;
   // Use visible right edge so we don't place the icon past overflow:hidden/clip containers (e.g. Jira)
@@ -229,11 +231,12 @@ function ensureFieldButton(el) {
         if (fieldButtonTarget) {
           const rect = fieldButtonTarget.getBoundingClientRect();
           if (rect && rect.width > 0 && rect.height > 0) {
-            // Match icon position: top-right for textareas, bottom-right for inputs
+            // Match icon position: top-align when tall, else center
+            const size = 18;
             const y =
-              fieldButtonTarget.tagName === 'TEXTAREA'
+              rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
                 ? rect.top + 6
-                : rect.bottom;
+                : rect.top + (rect.height - size) / 2;
             pendingMenuPosition = { x: rect.right, y };
           } else {
             pendingMenuPosition = null;
@@ -515,8 +518,11 @@ document.addEventListener(
     }
 
     const rect = el.getBoundingClientRect();
+    const size = 18;
     const menuY =
-      el.tagName === 'TEXTAREA' ? rect.top + 6 : rect.bottom;
+      rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
+        ? rect.top + 6
+        : rect.top + (rect.height - size) / 2;
     const position = { x: rect.right, y: menuY };
     try {
       chrome.runtime.sendMessage(
