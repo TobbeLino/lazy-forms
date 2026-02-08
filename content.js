@@ -82,8 +82,8 @@ let lastHoveredSelector = null;
 
 // Inline field button for showing matches
 const FIELD_BUTTON_ID = 'lazy-forms-field-button';
-/** Fields shorter than this (px) get vertically centered; taller ones get top-aligned. */
-const FIELD_TOP_ALIGN_MIN_HEIGHT = 50;
+const ICON_SIZE = 18; // px
+const ICON_MAX_TOP_OFFSET = 20;
 let fieldButtonTarget = null;
 let fieldButtonResizeObserver = null;
 
@@ -116,6 +116,10 @@ function getVisibleRightEdge(el) {
   return Math.min(rect.right, window.innerWidth);
 }
 
+function getIconTopOffset(containerRect) {
+  return (containerRect.top + Math.min(ICON_MAX_TOP_OFFSET, Math.round((containerRect.height - ICON_SIZE) / 2)));
+}
+
 function positionFieldButton() {
   if (fieldButtonPositionFrozen) return;
   const btn = document.getElementById(FIELD_BUTTON_ID);
@@ -125,18 +129,13 @@ function positionFieldButton() {
     btn.style.display = 'none';
     return;
   }
-  const size = 18;
-  // Top-align for tall fields; center for short ones
-  const top =
-    rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
-      ? rect.top + 6
-      : rect.top + (rect.height - size) / 2;
+  const top = getIconTopOffset(rect);
   // Use visible right edge so we don't place the icon past overflow:hidden/clip containers (e.g. Jira)
   let visibleRight = getVisibleRightEdge(fieldButtonTarget);
   // Account for field's padding-right (e.g. textareas) so the icon sits at the content edge, not over the padding
   const paddingRightPx = parseFloat(getComputedStyle(fieldButtonTarget).paddingRight) || 0;
   visibleRight -= paddingRightPx;
-  const left = visibleRight - size;
+  const left = visibleRight - ICON_SIZE - 1;
   btn.style.display = 'flex';
   btn.style.top = `${Math.max(0, top)}px`;
   btn.style.left = `${Math.max(0, left)}px`;
@@ -206,8 +205,8 @@ function ensureFieldButton(el) {
     btn.textContent = '≡';
     btn.style.position = 'fixed';
     btn.style.zIndex = '2147483647';
-    btn.style.width = '18px';
-    btn.style.height = '18px';
+    btn.style.width = `${ICON_SIZE}px`;
+    btn.style.height = `${ICON_SIZE}px`;
     btn.style.borderRadius = '50%';
     btn.style.border = 'none';
     btn.style.padding = '0';
@@ -231,12 +230,7 @@ function ensureFieldButton(el) {
         if (fieldButtonTarget) {
           const rect = fieldButtonTarget.getBoundingClientRect();
           if (rect && rect.width > 0 && rect.height > 0) {
-            // Match icon position: top-align when tall, else center
-            const size = 18;
-            const y =
-              rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
-                ? rect.top + 6
-                : rect.top + (rect.height - size) / 2;
+            const y = getIconTopOffset(rect);
             pendingMenuPosition = { x: rect.right, y };
           } else {
             pendingMenuPosition = null;
@@ -518,11 +512,7 @@ document.addEventListener(
     }
 
     const rect = el.getBoundingClientRect();
-    const size = 18;
-    const menuY =
-      rect.height >= FIELD_TOP_ALIGN_MIN_HEIGHT
-        ? rect.top + 6
-        : rect.top + (rect.height - size) / 2;
+    const menuY = getIconTopOffset(rect);
     const position = { x: rect.right, y: menuY };
     try {
       chrome.runtime.sendMessage(
