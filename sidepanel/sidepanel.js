@@ -321,7 +321,7 @@ function renderAddForm(pendingStore, container) {
 
   container.innerHTML = '';
   const form = document.createElement('div');
-  form.className = 'store-form store-form-add';
+  form.className = 'store-form';
   form.innerHTML = `
     <h3 class="section-title">${isPending ? 'Store new value' : 'Add lazy forms value'}</h3>
     <label>Value
@@ -742,16 +742,15 @@ function openEditForm(li, entry) {
   document.querySelectorAll('.entry-edit-form').forEach((el) => {
     const listItem = el.closest('li.entry-item');
     const row = listItem?.querySelector('.entry-row');
-    if (row) row.classList.remove('hidden');
+    if (row) row.classList.remove('editing');
     el.remove();
   });
   const row = li.querySelector('.entry-row');
-  if (row) row.classList.add('hidden');
+  if (row) row.classList.add('editing');
   const formWrap = document.createElement('div');
-  formWrap.className = 'entry-edit-form store-form store-form-add';
+  formWrap.className = 'store-form entry-edit-form';
   const pageInfo = getPageInfoForAdd();
   formWrap.innerHTML = `
-    <h3 class="section-title">Edit lazy forms value</h3>
     <label>Value
       <textarea class="edit-value" rows="2">${escapeHtml(entry.value)}</textarea>
     </label>
@@ -888,7 +887,7 @@ function openEditForm(li, entry) {
     chrome.runtime.sendMessage({ type: 'cancelPickElement' }).catch(() => {});
     setAimModeActive(false);
     formWrap.remove();
-    if (row) row.classList.remove('hidden');
+    if (row) row.classList.remove('editing');
   });
   formWrap.querySelector('.edit-save-btn').addEventListener('click', async () => {
     chrome.runtime.sendMessage({ type: 'cancelPickElement' }).catch(() => {});
@@ -920,7 +919,7 @@ function openEditForm(li, entry) {
       shortcut: editFormShortcut || undefined,
     });
     formWrap.remove();
-    if (row) row.classList.remove('hidden');
+    if (row) row.classList.remove('editing');
     requestState();
   });
 }
