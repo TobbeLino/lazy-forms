@@ -559,8 +559,8 @@ async function doRender(state) {
 
   if (subtitle) {
     subtitle.textContent = showAllValues
-      ? 'All stored lazy values'
-      : 'Stored lazy values for this page / field';
+      ? 'All added lazy form values'
+      : 'Lazy form values matching this page/field';
   }
 
   const pendingStore = await getPendingStore();
