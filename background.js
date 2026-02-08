@@ -54,7 +54,7 @@ let sidePanelOpenTabId = null;
 /** Send message without throwing when extension context is invalidated (e.g. after reload). */
 function safeSendMessage(msg) {
   try {
-    chrome.runtime.sendMessage(msg).catch(() => {});
+    chrome.runtime.sendMessage(msg)?.catch(() => {});
   } catch (e) {
     const msg = String(e?.message ?? e ?? '');
     if (!msg.includes('Extension context invalidated')) throw e;
@@ -342,7 +342,7 @@ function updateQuickSlots(matches) {
     quickSlots[i] = entry?.id || null;
 
     if (!entry) {
-      chrome.contextMenus.update(menuId, { visible: false }).catch(() => {});
+      chrome.contextMenus.update(menuId, { visible: false })?.catch(() => {});
     } else {
       const hasLabel = entry.label != null && String(entry.label).trim() !== '';
       const raw = hasLabel
@@ -353,7 +353,7 @@ function updateQuickSlots(matches) {
         entry.shortcut && String(entry.shortcut).trim()
           ? `${base} (${String(entry.shortcut).trim()})`
           : base;
-      chrome.contextMenus.update(menuId, { visible: true, title: withShortcut }).catch(() => {});
+      chrome.contextMenus.update(menuId, { visible: true, title: withShortcut })?.catch(() => {});
     }
   }
 }
@@ -444,7 +444,7 @@ async function refreshAll(tabId) {
     const hasFieldEntries = hasFieldEntriesForPage(entries, pageInfo);
     const hasPageMatches = matches.some((e) => !isFieldSectionEntry(e));
     if (hasFieldEntries || hasPageMatches) {
-      chrome.tabs.sendMessage(tabId, { type: 'enableFieldTracking' }).catch(() => {});
+      chrome.tabs.sendMessage(tabId, { type: 'enableFieldTracking' })?.catch(() => {});
     }
   }
 
@@ -475,9 +475,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab?.url) {
     // If this tab was in aim/pick mode, exit it (page reloaded)
     if (pickModeTabId === tabId) {
-      chrome.tabs.sendMessage(tabId, { type: 'cancelPickElement' }).catch(() => {});
+      chrome.tabs.sendMessage(tabId, { type: 'cancelPickElement' })?.catch(() => {});
       pickModeTabId = null;
-      chrome.runtime.sendMessage({ type: 'resetAimMode' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'resetAimMode' })?.catch(() => {});
     }
     const pageInfo = pageInfoFromUrl(tab.url);
     // Preserve existing selector only if same page (origin+pathname) so we don't clear field-specific state on noise
@@ -494,9 +494,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   // If we were in aim mode on another tab, exit it
   if (pickModeTabId != null && activeInfo.tabId !== pickModeTabId) {
-    chrome.tabs.sendMessage(pickModeTabId, { type: 'cancelPickElement' }).catch(() => {});
+    chrome.tabs.sendMessage(pickModeTabId, { type: 'cancelPickElement' })?.catch(() => {});
     pickModeTabId = null;
-    chrome.runtime.sendMessage({ type: 'resetAimMode' }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'resetAimMode' })?.catch(() => {});
   }
   const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => null);
   if (tab?.url) {
@@ -705,12 +705,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Content script: key combo pressed on page; return matching entry for current context or nothing
+  // Content script: key combo pressed on page; return entry for that shortcut (always paste into active field, regardless of context match)
   if (message.type === 'shortcutPressed' && sender.tab?.id) {
     (async () => {
       const keyCombo = message.keyCombo && String(message.keyCombo).trim().toLowerCase();
-      const pageInfo = message.pageInfo;
-      if (!keyCombo || !pageInfo) {
+      if (!keyCombo) {
         sendResponse?.({ ok: false });
         return;
       }
@@ -718,8 +717,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const withShortcut = (entries || []).filter(
         (e) => e.shortcut && String(e.shortcut).trim().toLowerCase() === keyCombo
       );
-      const matching = getMatchingEntries(withShortcut, pageInfo);
-      const sorted = sortBySpecificity(matching);
+      const sorted = sortBySpecificity(withShortcut);
       const entry = sorted[0] || null;
       sendResponse?.({ ok: true, entry });
     })();
@@ -750,7 +748,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }, (tabs) => {
         tabs.forEach((tab) => {
           if (!tab.id) return;
-          chrome.tabs.sendMessage(tab.id, { type: 'settingsUpdated', settings: merged }).catch(() => {});
+          chrome.tabs.sendMessage(tab.id, { type: 'settingsUpdated', settings: merged })?.catch(() => {});
         });
       });
 
@@ -793,7 +791,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         pickModeTabId = tabs[0].id;
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'startPickElement' }).catch(() => {});
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'startPickElement' })?.catch(() => {});
       }
       sendResponse?.({ ok: true });
     });
@@ -805,10 +803,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabIdToCancel = pickModeTabId;
     pickModeTabId = null;
     if (tabIdToCancel) {
-      chrome.tabs.sendMessage(tabIdToCancel, { type: 'cancelPickElement' }).catch(() => {});
+      chrome.tabs.sendMessage(tabIdToCancel, { type: 'cancelPickElement' })?.catch(() => {});
     } else {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, { type: 'cancelPickElement' }).catch(() => {});
+        if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, { type: 'cancelPickElement' })?.catch(() => {});
       });
     }
     sendResponse?.({ ok: true });
@@ -831,7 +829,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           type: 'highlightElement',
           selector: message.selector,
           useFocused: message.useFocused,
-        }).catch(() => {});
+        })?.catch(() => {});
       }
       try { sendResponse?.({ ok: true }); } catch (e) {}
     });
@@ -841,7 +839,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'clearHighlight') {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'clearHighlight' }).catch(() => {});
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'clearHighlight' })?.catch(() => {});
       }
       try { sendResponse?.({ ok: true }); } catch (e) {}
     });
@@ -930,7 +928,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }, (tabs) => {
     tabs.forEach((tab) => {
       if (tab.id && tab.url) {
-        chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }).catch(() => {});
+        chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] })?.catch(() => {});
       }
     });
   });
@@ -953,7 +951,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       const { entries } = await loadStorage();
       const entry = entries.find((e) => e.id === entryId);
       if (entry) {
-        chrome.tabs.sendMessage(tab.id, { type: 'applyValue', value: entry.value }).catch(() => {});
+        chrome.tabs.sendMessage(tab.id, { type: 'applyValue', value: entry.value })?.catch(() => {});
       }
     })();
     return;

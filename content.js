@@ -449,7 +449,7 @@ document.addEventListener(
           value,
           position: { x: lastContextMenuX, y: lastContextMenuY },
         },
-      }).catch?.(() => {});
+      })?.catch(() => {});
     } catch {
       // ignore if messaging is not available
     }
@@ -474,7 +474,7 @@ document.addEventListener(
       e.preventDefault();
       e.stopPropagation();
       try {
-        chrome.runtime.sendMessage({ type: 'toggleSidePanel' }).catch?.(() => {});
+        chrome.runtime.sendMessage({ type: 'toggleSidePanel' })?.catch(() => {});
       } catch {}
       return;
     }
@@ -507,7 +507,7 @@ document.addEventListener(
             setFieldValue(el, reply.entry.value ?? '');
           }
         }
-      ).catch?.(() => {});
+      )?.catch?.(() => {});
       return;
     }
 
@@ -521,7 +521,7 @@ document.addEventListener(
           if (!reply || !reply.ok) return;
           showFloatingMenu(reply.sections || {}, position);
         }
-      ).catch?.(() => {});
+      )?.catch(() => {});
     } catch {
       // ignore errors
     }
@@ -664,7 +664,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 hideFieldButton();
               }
             }
-          ).catch?.(() => {});
+          )?.catch(() => {});
         } catch {
           // ignore
         }
@@ -691,7 +691,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 hideFieldButton();
               }
             }
-          ).catch?.(() => {});
+          )?.catch(() => {});
         } catch {}
       }
     }
@@ -849,7 +849,7 @@ function enterPickElementMode() {
     const selector = getStableSelector(el);
     const value = getFieldValue(el);
     try {
-      chrome.runtime.sendMessage({ type: 'pickElementResult', selector, value }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'pickElementResult', selector, value })?.catch(() => {});
     } catch {}
     exitPickElementMode();
   }
@@ -1099,7 +1099,7 @@ function showFloatingMenu(sectionsOrEntries, position, noFocus = false) {
             selector: getStableSelector(lastRightClickedElement),
             value: getFieldValue(lastRightClickedElement),
           },
-        }).catch(() => {});
+        })?.catch(() => {});
       } catch {}
     }
   });
@@ -1126,7 +1126,7 @@ function showFloatingMenu(sectionsOrEntries, position, noFocus = false) {
   attachClickNoFocus(panelLink, lastRightClickedElement, () => {
     close();
     try {
-      chrome.runtime.sendMessage({ type: 'openSidePanelForAdd' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'openSidePanelForAdd' })?.catch(() => {});
     } catch {}
   });
   container.appendChild(panelLink);
