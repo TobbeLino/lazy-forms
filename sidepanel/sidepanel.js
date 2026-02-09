@@ -1019,7 +1019,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (exportBtn) {
     exportBtn.addEventListener('click', async () => {
       const store = await getStore();
-      const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
+      // Export only values (version + entries), not settings
+      const valuesOnly = {
+        version: store?.version ?? 1,
+        entries: Array.isArray(store?.entries) ? store.entries : [],
+      };
+      const blob = new Blob([JSON.stringify(valuesOnly, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'lazy-forms-values.json';
@@ -1039,7 +1044,14 @@ document.addEventListener('DOMContentLoaded', () => {
           const text = await file.text();
           const parsed = JSON.parse(text);
           if (!parsed.entries || !Array.isArray(parsed.entries)) {
-            alert('Invalid format: expected { entries: [...] }');
+            await showModal({
+              titleId: 'values-import-invalid-title',
+              title: 'Invalid values file',
+              bodyHtml: 'Invalid format: expected <code>{ entries: [...] }</code> (a top-level <code>entries</code> array).',
+              buttons: [
+                { label: 'OK', value: 'ok' },
+              ],
+            });
             return;
           }
           const current = await getStore();
@@ -1073,6 +1085,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const SETTINGS_KEYS = ['showFieldIcon', 'showIconOnPageValues', 'shortcutOpenMenu', 'shortcutOpenPanel'];
+  const SETTINGS_SCHEMA = {
+    showFieldIcon: 'boolean',
+    showIconOnPageValues: 'boolean',
+    shortcutOpenMenu: 'string',
+    shortcutOpenPanel: 'string',
+  };
   const exportSettingsBtn = document.getElementById('export-settings-btn');
   const importSettingsBtn = document.getElementById('import-settings-btn');
   if (exportSettingsBtn) {
@@ -1101,16 +1119,31 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           const text = await file.text();
           const parsed = JSON.parse(text);
-          const raw = parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed;
+          if (!parsed || typeof parsed !== 'object' || !parsed.settings || typeof parsed.settings !== 'object') {
+            await showModal({
+              titleId: 'settings-import-invalid-title',
+              title: 'Invalid settings file',
+              bodyHtml: 'Invalid format: expected <code>{ settings: { ... } }</code> (a top-level <code>settings</code> object).',
+              buttons: [
+                { label: 'OK', value: 'ok' },
+              ],
+            });
+            return;
+          }
+          const raw = parsed.settings;
           const toApply = {};
           SETTINGS_KEYS.forEach((k) => {
-            if (raw[k] !== undefined) toApply[k] = raw[k];
+            if (raw[k] === undefined) return;
+            const expectedType = SETTINGS_SCHEMA[k];
+            if (expectedType && typeof raw[k] === expectedType) {
+              toApply[k] = raw[k];
+            }
           });
           if (Object.keys(toApply).length === 0) {
             await showModal({
               titleId: 'settings-import-invalid-title',
               title: 'Invalid settings file',
-              bodyHtml: 'Invalid format: expected <code>{ settings: { ... } }</code> or a settings object with <code>showFieldIcon</code>, <code>shortcutOpenMenu</code>, etc.',
+              bodyHtml: 'Invalid format: expected <code>{ settings: { ... } }</code> with at least one of <code>showFieldIcon</code>, <code>showIconOnPageValues</code>, <code>shortcutOpenMenu</code>, <code>shortcutOpenPanel</code>.',
               buttons: [
                 { label: 'OK', value: 'ok' },
               ],
