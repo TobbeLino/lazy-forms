@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bestzip lazy-forms.zip manifest.json background.js content.js lib/ popup/ sidepanel/",
+    "build": "bestzip lazy-forms.zip manifest.json background.js content.js lib/ sidepanel/",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
