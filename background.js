@@ -363,7 +363,7 @@ function updateQuickSlots(matches) {
         entry.shortcut && String(entry.shortcut).trim()
           ? `${base} (${String(entry.shortcut).trim()})`
           : base;
-      chrome.contextMenus.update(menuId, { visible: true, title: withShortcut })?.catch(() => {});
+      chrome.contextMenus.update(menuId, { visible: true, enabled: true, title: withShortcut })?.catch(() => {});
     }
   }
 }

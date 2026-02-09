@@ -26,6 +26,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
+      "id": "lazy-forms@lazy-forms.local",
       "strict_min_version": "115.0"
     }
   },

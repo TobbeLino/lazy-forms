@@ -967,6 +967,7 @@ function showFloatingMenu(sectionsOrEntries, position, noFocus = false) {
       padding: 8px 12px;
       border: none;
       background: none;
+      color: #000;
       text-align: left;
       cursor: pointer;
       white-space: nowrap;
