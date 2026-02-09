@@ -1,6 +1,6 @@
 {
   "name": "lazy-forms",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Context-aware storage for form field values (input, textarea, select). Right-click to store or apply values.",
   "private": true,
   "type": "module",
