@@ -1,6 +1,6 @@
 # Lazy forms
 
-Chrome extension for context-aware storage of form field values. Right-click **inputs**, **textareas**, **dropdowns (select)**, or **contenteditable** areas (e.g. Gmail compose, rich text editors) to store or apply values as **plain text**. Data is stored in Chrome sync storage (syncs across devices when signed in).
+Browser extension (Chrome and Firefox) for context-aware storage of form field values. Right-click **inputs**, **textareas**, **dropdowns (select)**, or **contenteditable** areas (e.g. Gmail compose, rich text editors) to store or apply values as **plain text**. Data is stored in the browser’s sync storage (Chrome: syncs across devices when signed in; Firefox: same when using a Firefox account).
 
 ## Features
 
@@ -31,10 +31,13 @@ In **Settings** (side panel) you can enable:
 
 ## Install
 
-1. Open `chrome://extensions`
-2. Enable "Developer mode"
-3. Click "Load unpacked"
-4. Select the `lazy-forms` folder
+**Firefox** (115 or newer)
+1. Run `npm run build-firefox` (copies `manifest.firefox.json` → `manifest.json`).
+2. Open `about:debugging` → "This Firefox" → "Load Temporary Add-on…" → select the `lazy-forms` folder.
+
+**Chrome**
+1. Run `npm run build-chrome` (copies `manifest.chrome.json` → `manifest.json`).
+2. Open `chrome://extensions` → enable "Developer mode" → "Load unpacked" → select the `lazy-forms` folder.
 
 ## Usage
 

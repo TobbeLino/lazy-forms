@@ -63,12 +63,22 @@ function safeSendMessage(msg) {
 
 /** Update the extension toolbar icon tooltip to show the side panel shortcut. */
 function updateActionTitle(settings) {
-  if (!settings || typeof chrome.action?.setTitle !== 'function') return;
+  const action = typeof chrome !== 'undefined' ? chrome.action : typeof browser !== 'undefined' ? browser.action : null;
+  if (!settings || !action?.setTitle) return;
   const shortcut = settings.shortcutOpenPanel && String(settings.shortcutOpenPanel).trim();
   const title = shortcut ? `Lazy forms (${shortcut})` : 'Lazy forms';
   try {
-    chrome.action.setTitle({ title });
+    action.setTitle({ title });
   } catch {}
+}
+
+/** Open the side panel (Chrome: sidePanel; Firefox: sidebar). */
+function openSidePanel(tabId, windowId) {
+  if (typeof chrome !== 'undefined' && chrome.sidePanel?.open) {
+    chrome.sidePanel.open({ tabId, windowId });
+  } else if (typeof browser !== 'undefined' && browser.sidebarAction?.open) {
+    browser.sidebarAction.open();
+  }
 }
 
 // ============ STORAGE ============
@@ -644,7 +654,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     } else {
       try {
-        chrome.sidePanel.open({ tabId, windowId: sender.tab.windowId });
+        openSidePanel(tabId, sender.tab.windowId);
         sidePanelOpenTabId = tabId;
       } catch {}
     }
@@ -656,7 +666,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'openSidePanelForAdd' && sender.tab?.id) {
     const tabId = sender.tab.id;
     try {
-      chrome.sidePanel.open({ tabId, windowId: sender.tab.windowId });
+      openSidePanel(tabId, sender.tab.windowId);
       sidePanelOpenTabId = tabId;
     } catch {}
     (async () => {
@@ -869,7 +879,7 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
   try {
-    chrome.sidePanel.open({ tabId, windowId: tab.windowId });
+    openSidePanel(tabId, tab.windowId);
     sidePanelOpenTabId = tabId;
   } catch {}
 });
@@ -960,7 +970,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   // Store value: open sidepanel (must be synchronous for user gesture)
   if (id === 'lazy-forms-store') {
     try {
-      chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId });
+      openSidePanel(tab.id, tab.windowId);
       sidePanelOpenTabId = tab.id;
     } catch {}
 
@@ -999,7 +1009,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   // More options: open sidepanel
   if (id === 'lazy-forms-more') {
     try {
-      chrome.sidePanel.open({ tabId: tab.id, windowId: tab.windowId });
+      openSidePanel(tab.id, tab.windowId);
       sidePanelOpenTabId = tab.id;
     } catch {}
   }

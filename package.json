@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "bestzip lazy-forms.zip manifest.json background.js content.js lib/ sidepanel/",
+    "build-chrome": "node -e \"require('fs').copyFileSync('manifest.chrome.json','manifest.json')\"",
+    "build-firefox": "node -e \"require('fs').copyFileSync('manifest.firefox.json','manifest.json')\"",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
