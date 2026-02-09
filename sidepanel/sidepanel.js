@@ -82,6 +82,20 @@ async function getShortcutsInUse(excludeEntryId = null) {
   return set;
 }
 
+/** Get the base (physical) key for shortcut capture, so e.g. Digit2 is stored as "2" not "@". */
+function getBaseKeyFromKeyEvent(e) {
+  const code = e.code;
+  if (code) {
+    if (code.startsWith('Digit')) return code.slice(-1);
+    if (code.startsWith('Key')) return code.slice(-1).toUpperCase();
+    if (code.startsWith('Numpad')) {
+      const digit = code.replace('Numpad', '');
+      if (/^\d$/.test(digit)) return digit;
+    }
+  }
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+}
+
 /** Normalize shortcut string for equality check (e.g. Ctrl+Alt+1 vs ctrl+alt+1). */
 function normalizeShortcutForComparison(shortcut) {
   if (!shortcut || typeof shortcut !== 'string') return '';
@@ -458,7 +472,7 @@ function renderAddForm(pendingStore, container) {
         if (e.shiftKey) parts.push('Shift');
         if (e.altKey) parts.push('Alt');
         if (e.metaKey) parts.push('Meta');
-        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        const key = getBaseKeyFromKeyEvent(e);
         if (!parts.length) return;
         parts.push(key);
         addFormShortcut = parts.join('+');
@@ -812,7 +826,7 @@ function openEditForm(li, entry) {
         if (e.shiftKey) parts.push('Shift');
         if (e.altKey) parts.push('Alt');
         if (e.metaKey) parts.push('Meta');
-        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        const key = getBaseKeyFromKeyEvent(e);
         if (!parts.length) return;
         parts.push(key);
         editFormShortcut = parts.join('+');
@@ -1216,7 +1230,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.shiftKey) parts.push('Shift');
         if (e.altKey) parts.push('Alt');
         if (e.metaKey) parts.push('Meta');
-        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        const key = getBaseKeyFromKeyEvent(e);
         if (!parts.length) {
           // Require at least one modifier to avoid stealing normal typing keys
           return;
@@ -1269,7 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.shiftKey) parts.push('Shift');
         if (e.altKey) parts.push('Alt');
         if (e.metaKey) parts.push('Meta');
-        const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+        const key = getBaseKeyFromKeyEvent(e);
         if (!parts.length) return;
         parts.push(key);
         const shortcut = parts.join('+');

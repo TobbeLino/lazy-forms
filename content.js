@@ -380,14 +380,27 @@ function updateSettingsFromBackground(newSettings) {
   lazyFormsSettings = merged;
 }
 
+/** Get the base (physical) key for shortcut display/matching, so e.g. Digit2 shows "2" not "@". */
+function getBaseKeyFromKeyEvent(e) {
+  const code = e.code;
+  if (code) {
+    if (code.startsWith('Digit')) return code.slice(-1);
+    if (code.startsWith('Key')) return code.slice(-1).toUpperCase();
+    if (code.startsWith('Numpad')) {
+      const digit = code.replace('Numpad', '');
+      if (/^\d$/.test(digit)) return digit;
+    }
+  }
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+}
+
 function normalizeEventToShortcut(e) {
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.shiftKey) parts.push('Shift');
   if (e.altKey) parts.push('Alt');
   if (e.metaKey) parts.push('Meta');
-  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-  parts.push(key);
+  parts.push(getBaseKeyFromKeyEvent(e));
   return parts.join('+');
 }
 
