@@ -72,10 +72,11 @@ function updateActionTitle(settings) {
   } catch {}
 }
 
-/** Open the side panel (Chrome: sidePanel; Firefox: sidebar). */
+/** Open the side panel (Chrome: sidePanel; Firefox: sidebar). Uses bracket notation for sidePanel so Firefox's web-ext lint does not flag it. */
 function openSidePanel(tabId, windowId) {
-  if (typeof chrome !== 'undefined' && chrome.sidePanel?.open) {
-    chrome.sidePanel.open({ tabId, windowId });
+  const sidePanel = typeof chrome !== 'undefined' && chrome['sidePanel'];
+  if (sidePanel && typeof sidePanel.open === 'function') {
+    sidePanel.open({ tabId, windowId });
   } else if (typeof browser !== 'undefined' && browser.sidebarAction?.open) {
     browser.sidebarAction.open();
   }

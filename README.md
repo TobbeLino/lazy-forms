@@ -31,12 +31,12 @@ In **Settings** (side panel) you can enable:
 
 ## Install
 
-**Firefox** (115 or newer)
-1. Run `npm run build-firefox` (copies `manifest.firefox.json` → `manifest.json`).
+**Firefox** (142 or newer for data collection consent; 115+ for local/testing)
+1. Run `npm run build:firefox` (copies `manifest.firefox.json` → `manifest.json` and builds to ./dist/).
 2. Open `about:debugging` → "This Firefox" → "Load Temporary Add-on…" → select the `lazy-forms` folder.
 
 **Chrome**
-1. Run `npm run build-chrome` (copies `manifest.chrome.json` → `manifest.json`).
+1. Run `npm run build:chrome` (copies `manifest.chrome.json` → `manifest.json`, and zips to ./dist).
 2. Open `chrome://extensions` → enable "Developer mode" → "Load unpacked" → select the `lazy-forms` folder.
 
 ## Usage

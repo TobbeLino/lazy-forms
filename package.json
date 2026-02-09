@@ -5,11 +5,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bestzip lazy-forms.zip manifest.json background.js content.js lib/ sidepanel/",
-    "build-chrome": "node -e \"require('fs').copyFileSync('manifest.chrome.json','manifest.json')\"",
-    "build-firefox": "node -e \"require('fs').copyFileSync('manifest.firefox.json','manifest.json')\"",
+    "build:chrome": "npm run manifest-chrome && bestzip ./dist/lazy-forms.zip manifest.json background.js content.js lib/ sidepanel/",
+    "build:firefox": "npm run manifest-firefox && web-ext build --overwrite-dest --artifacts-dir dist",
+    "manifest-chrome": "node -e \"require('fs').copyFileSync('manifest.chrome.json','manifest.json')\"",
+    "manifest-firefox": "node -e \"require('fs').copyFileSync('manifest.firefox.json','manifest.json')\"",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "lint:firefox": "web-ext lint"
   },
   "keywords": [
     "chrome-extension",
@@ -21,7 +23,8 @@
   "license": "MIT",
   "devDependencies": {
     "bestzip": "^2.2.1",
-    "eslint": "^9.39.0"
+    "eslint": "^9.39.0",
+    "web-ext": "^9.2.0"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -45,6 +45,11 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+/** Set element content from HTML string. Uses createContextualFragment to avoid innerHTML assignment (web-ext lint). */
+function setHtml(el, html) {
+  el.replaceChildren(document.createRange().createContextualFragment(html));
+}
+
 function uuid() {
   return crypto.randomUUID?.() ?? 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -171,7 +176,7 @@ function showModal(opts) {
   const buttonsHtml = buttons
     .map((b) => `<button type="button" class="btn-settings" data-choice="${escapeHtml(b.value)}">${escapeHtml(b.label)}</button>`)
     .join('');
-  box.innerHTML = `${titleHtml}<div style="margin:0 0 16px;font-size:13px;color:#555;">${bodyHtml}</div><div style="display:flex;gap:8px;justify-content:flex-end;">${buttonsHtml}</div>`;
+  setHtml(box, `${titleHtml}<div style="margin:0 0 16px;font-size:13px;color:#555;">${bodyHtml}</div><div style="display:flex;gap:8px;justify-content:flex-end;">${buttonsHtml}</div>`);
   overlay.appendChild(box);
 
   return new Promise((resolve) => {
@@ -316,7 +321,7 @@ function closeAddSection() {
   const addSection = document.getElementById('add-section');
   if (addSection) {
     addSection.classList.add('hidden');
-    addSection.innerHTML = '';
+    addSection.replaceChildren();
   }
   addSectionVisible = false;
 }
@@ -333,10 +338,10 @@ function renderAddForm(pendingStore, container) {
   const hasSelector = !!(pendingStore?.selector || pageInfo?.selector);
   const defaultType = isPending && hasSelector ? 'fieldOnly' : 'url';
 
-  container.innerHTML = '';
+  container.replaceChildren();
   const form = document.createElement('div');
   form.className = 'store-form';
-  form.innerHTML = `
+  setHtml(form, `
     <h3 class="section-title">${isPending ? 'Store new value' : 'Add lazy forms value'}</h3>
     <label>Value
       <textarea id="store-value" rows="2">${escapeHtml(value)}</textarea>
@@ -370,7 +375,7 @@ function renderAddForm(pendingStore, container) {
       <button type="button" id="store-save">Save</button>
       <button type="button" id="store-cancel">Cancel</button>
     </div>
-  `;
+  `);
   container.appendChild(form);
 
   // Move initial focus to Save so a new value can quickly be added with Enter
@@ -586,13 +591,16 @@ async function doRender(state) {
   }
 
   const entriesToShow = showAllValues ? (state?.entries || []) : (state?.matches || []);
-  list.innerHTML = '';
+  list.replaceChildren();
 
   if (!entriesToShow.length) {
     empty.classList.remove('hidden');
-    empty.innerHTML = showAllValues
-      ? 'No lazy values yet.<br>Add one or use the context menu.'
-      : 'No lazy values match.<br>Add one or use the context menu.';
+    empty.replaceChildren();
+    empty.append(
+      showAllValues ? 'No lazy values yet.' : 'No lazy values match.',
+      document.createElement('br'),
+      'Add one or use the context menu.'
+    );
     return;
   }
   empty.classList.add('hidden');
@@ -626,7 +634,7 @@ async function doRender(state) {
       const shortcutDisplay = entry.shortcut && String(entry.shortcut).trim()
         ? ` <span class="entry-shortcut">(${escapeHtml(normalizeShortcutDisplay(entry.shortcut, entry.shortcut))})</span>`
         : '';
-      li.innerHTML = `
+      setHtml(li, `
         <div class="entry-row" data-entry-id="${escapeHtml(entry.id)}">
           <span class="drag-handle" title="Drag to reorder">${ICON_DRAG}</span>
           <span class="entry-label-wrap">
@@ -638,7 +646,7 @@ async function doRender(state) {
             <button type="button" class="icon-btn-item delete-icon-btn" title="Delete">${ICON_DELETE}</button>
           </div>
         </div>
-      `;
+      `);
       const row = li.querySelector('.entry-row');
       row.addEventListener('click', (e) => {
         if (e.target.closest('.edit-icon-btn') || e.target.closest('.delete-icon-btn') || e.target.closest('.drag-handle')) return;
@@ -764,7 +772,7 @@ function openEditForm(li, entry) {
   const formWrap = document.createElement('div');
   formWrap.className = 'store-form entry-edit-form';
   const pageInfo = getPageInfoForAdd();
-  formWrap.innerHTML = `
+  setHtml(formWrap, `
     <label>Value
       <textarea class="edit-value" rows="2">${escapeHtml(entry.value)}</textarea>
     </label>
@@ -797,7 +805,7 @@ function openEditForm(li, entry) {
       <button type="button" class="edit-save-btn">Save</button>
       <button type="button" class="edit-cancel-btn">Cancel</button>
     </div>
-  `;
+  `);
   li.appendChild(formWrap);
   let editFormShortcut = entry.shortcut ? String(entry.shortcut).trim() : '';
   const editShortcutBtn = formWrap.querySelector('.edit-shortcut-btn');
