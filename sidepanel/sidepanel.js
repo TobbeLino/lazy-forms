@@ -1022,7 +1022,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'lazy-forms-config.json';
+      a.download = 'lazy-forms-values.json';
       a.click();
       URL.revokeObjectURL(a.href);
     });
