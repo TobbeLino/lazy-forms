@@ -22,7 +22,11 @@
     }
   },
   "sidebar_action": {
-    "default_panel": "sidepanel/sidepanel.html"
+    "default_panel": "sidepanel/sidepanel.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png"
+    }
   },
   "browser_specific_settings": {
     "gecko": {
