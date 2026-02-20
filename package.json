@@ -1,10 +1,11 @@
 {
   "name": "lazy-forms",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Context-aware storage for form field values (input, textarea, select). Right-click to store or apply values.",
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-unpacked.js",
     "build:chrome": "npm run manifest-chrome && bestzip ./dist/lazy-forms.zip manifest.json background.js content.js lib/ sidepanel/",
     "build:firefox": "npm run manifest-firefox && web-ext build --overwrite-dest --artifacts-dir dist",
     "manifest-chrome": "node -e \"require('fs').copyFileSync('manifest.chrome.json','manifest.json')\"",

@@ -39,6 +39,11 @@ In **Settings** (side panel) you can enable:
 1. Run `npm run build:chrome` (copies `manifest.chrome.json` → `manifest.json`, and zips to ./dist).
 2. Open `chrome://extensions` → enable "Developer mode" → "Load unpacked" → select the `lazy-forms` folder.
 
+If you see errors in Chrome like *"background.scripts requires manifest version 2"* or *"Unrecognized manifest key sidebar_action"*, the wrong manifest is active: run **`npm run build:chrome`** and reload the extension.
+
+**Use both browsers at once**
+Run **`npm run build`** to create two folders: `dist/chrome/` and `dist/firefox/`. Load `dist/chrome` in Chrome (Load unpacked) and `dist/firefox` in Firefox (Load Temporary Add-on). Re-run after code changes.
+
 ## Usage
 
 1. On any page with a form field or contenteditable (e.g. email body), right-click the field.
