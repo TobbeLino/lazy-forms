@@ -98,6 +98,7 @@ function getBaseKeyFromKeyEvent(e) {
       if (/^\d$/.test(digit)) return digit;
     }
   }
+  if (e.key == null || typeof e.key !== 'string') return '';
   return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
 
@@ -342,7 +343,7 @@ function renderAddForm(pendingStore, container) {
   const form = document.createElement('div');
   form.className = 'store-form';
   setHtml(form, `
-    <h3 class="section-title">${isPending ? 'Store new value' : 'Add lazy forms value'}</h3>
+    <h3 class="section-title">${isPending ? 'Store new value' : 'Add value to lazy forms'}</h3>
     <label>Value
       <textarea id="store-value" rows="2">${escapeHtml(value)}</textarea>
     </label>

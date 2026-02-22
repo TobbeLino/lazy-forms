@@ -391,6 +391,7 @@ function getBaseKeyFromKeyEvent(e) {
       if (/^\d$/.test(digit)) return digit;
     }
   }
+  if (e.key == null || typeof e.key !== 'string') return '';
   return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
 

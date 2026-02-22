@@ -922,7 +922,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: 'lazy-forms-store',
       parentId: 'lazy-forms-parent',
-      title: 'Add lazy forms value…',
+      title: 'Add value to lazy forms…',
       contexts: menuContexts,
     });
 
