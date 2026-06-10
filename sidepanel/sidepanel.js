@@ -89,8 +89,9 @@ async function getShortcutsInUse(excludeEntryId = null) {
 
 /** Get the base (physical) key for shortcut capture, so e.g. Digit2 is stored as "2" not "@". */
 function getBaseKeyFromKeyEvent(e) {
+  if (!e || typeof e !== 'object') return '';
   const code = e.code;
-  if (code) {
+  if (typeof code === 'string' && code) {
     if (code.startsWith('Digit')) return code.slice(-1);
     if (code.startsWith('Key')) return code.slice(-1).toUpperCase();
     if (code.startsWith('Numpad')) {
@@ -98,8 +99,9 @@ function getBaseKeyFromKeyEvent(e) {
       if (/^\d$/.test(digit)) return digit;
     }
   }
-  if (e.key == null || typeof e.key !== 'string') return '';
-  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  const key = e.key;
+  if (key == null || typeof key !== 'string' || key.length === 0) return '';
+  return key.length === 1 ? key.toUpperCase() : key;
 }
 
 /** Normalize shortcut string for equality check (e.g. Ctrl+Alt+1 vs ctrl+alt+1). */

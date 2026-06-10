@@ -104,6 +104,122 @@
   // Track which field the current floating menu belongs to (if any)
   let currentFloatingMenuField = null;
 
+  /** react-select and similar widgets keep a tiny <input> while the visible box is a larger ancestor. */
+  const NARROW_FIELD_WIDTH_PX = 48;
+
+  function isCompositeSelectInput(fieldEl) {
+    if (!fieldEl) return false;
+    const id = fieldEl.id || '';
+    const className = fieldEl.className?.toString?.() || '';
+    return (
+      (id.startsWith('react-select-') && id.endsWith('-input')) ||
+      /(?:^|\s)-input(?:\s|$)/.test(className) ||
+      fieldEl.getAttribute?.('role') === 'combobox'
+    );
+  }
+
+  function hasSelectControlClass(el) {
+    const cn = el.className?.toString?.() || '';
+    return /(?:^|\s)-control(?:\s|$)/.test(cn) || cn.includes('__control');
+  }
+
+  /**
+   * Outermost react-select / Atlaskit Select shell that wraps the focused input.
+   * Multi-select fields often place a wide input on a second line; always use the full control box.
+   */
+  function findCompositeControlAncestor(fieldEl) {
+    if (!isCompositeSelectInput(fieldEl)) return null;
+
+    const fieldRect = fieldEl.getBoundingClientRect();
+    const inlineEditRoot = fieldEl.closest('[data-testid*="inline-edit"]');
+    let outermostControl = null;
+    let indicatorShell = null;
+    let node = fieldEl.parentElement;
+
+    while (node && node !== document.body) {
+      if (inlineEditRoot && node !== inlineEditRoot && !inlineEditRoot.contains(node)) break;
+
+      const nodeRect = node.getBoundingClientRect();
+      if (nodeRect.width > fieldRect.width + 8) {
+        if (hasSelectControlClass(node)) {
+          outermostControl = node;
+        } else if (
+          !indicatorShell &&
+          node.querySelector?.('[class*="-IndicatorsContainer"]')
+        ) {
+          indicatorShell = node;
+        }
+      }
+
+      node = node.parentElement;
+    }
+
+    return outermostControl || indicatorShell;
+  }
+
+  /** Wider field shell when composite detection misses (e.g. custom Jira widgets). */
+  function findWiderFieldShell(fieldEl, fieldRect) {
+    const inlineEditRoot = fieldEl.closest('[data-testid*="inline-edit"]');
+    let best = null;
+    let bestWidth = fieldRect.width;
+    let node = fieldEl.parentElement;
+    let depth = 0;
+
+    while (node && node !== document.body && depth < 10) {
+      if (inlineEditRoot && node !== inlineEditRoot && !inlineEditRoot.contains(node)) break;
+
+      const nodeRect = node.getBoundingClientRect();
+      if (nodeRect.width > bestWidth + 20 && nodeRect.height >= fieldRect.height - 4) {
+        best = node;
+        bestWidth = nodeRect.width;
+      }
+
+      node = node.parentElement;
+      depth++;
+    }
+
+    return best;
+  }
+
+  /**
+   * Element whose bounding box should be used for icon placement (may differ from the focused input).
+   */
+  function getIconPositionElement(fieldEl) {
+    if (!fieldEl) return fieldEl;
+
+    const fieldRect = fieldEl.getBoundingClientRect();
+    const control = findCompositeControlAncestor(fieldEl);
+    if (control) return control;
+
+    if (fieldRect.width < NARROW_FIELD_WIDTH_PX) {
+      const shell = findWiderFieldShell(fieldEl, fieldRect);
+      if (shell) return shell;
+    }
+
+    return fieldEl;
+  }
+
+  /** Right inset inside the position element (e.g. react-select dropdown chevron). */
+  function getIconRightInset(positionEl, fieldEl) {
+    if (positionEl === fieldEl) return 0;
+    const indicators = positionEl.querySelector('[class*="-IndicatorsContainer"]');
+    if (!indicators) return 0;
+    return indicators.getBoundingClientRect().width;
+  }
+
+  function getFieldButtonLayout(fieldEl) {
+    const positionEl = getIconPositionElement(fieldEl);
+    const rect = positionEl.getBoundingClientRect();
+    let visibleRight = getVisibleRightEdge(positionEl);
+    const paddingRightPx = parseFloat(getComputedStyle(positionEl).paddingRight) || 0;
+    visibleRight -= paddingRightPx + getIconRightInset(positionEl, fieldEl);
+    // Keep the icon inside the visible control even if overflow clipping mis-measures the right edge.
+    const minRight = rect.left + ICON_SIZE + 4;
+    visibleRight = Math.max(visibleRight, minRight);
+    visibleRight = Math.min(visibleRight, rect.right - 2);
+    return { rect, visibleRight };
+  }
+
   /** Right edge of the visible (clipped) area for el. Only clamp when the field actually overflows its container. */
   function getVisibleRightEdge(el) {
     const rect = el.getBoundingClientRect();
@@ -130,17 +246,12 @@
     if (fieldButtonPositionFrozen) return;
     const btn = document.getElementById(FIELD_BUTTON_ID);
     if (!btn || !fieldButtonTarget) return;
-    const rect = fieldButtonTarget.getBoundingClientRect();
+    const { rect, visibleRight } = getFieldButtonLayout(fieldButtonTarget);
     if (!rect || rect.width === 0 || rect.height === 0) {
       btn.style.display = 'none';
       return;
     }
     const top = getIconTopOffset(rect);
-    // Use visible right edge so we don't place the icon past overflow:hidden/clip containers (e.g. Jira)
-    let visibleRight = getVisibleRightEdge(fieldButtonTarget);
-    // Account for field's padding-right (e.g. textareas) so the icon sits at the content edge, not over the padding
-    const paddingRightPx = parseFloat(getComputedStyle(fieldButtonTarget).paddingRight) || 0;
-    visibleRight -= paddingRightPx;
     const left = visibleRight - ICON_SIZE - 1;
     btn.style.display = 'flex';
     btn.style.top = `${Math.max(0, top)}px`;
@@ -166,6 +277,10 @@
     };
     fieldButtonResizeObserver = new ResizeObserver(() => scheduleReposition());
     fieldButtonResizeObserver.observe(el);
+    const positionEl = getIconPositionElement(el);
+    if (positionEl !== el) {
+      fieldButtonResizeObserver.observe(positionEl);
+    }
     if (el.parentElement && el.parentElement !== document.body) {
       fieldButtonResizeObserver.observe(el.parentElement);
     }
@@ -234,10 +349,10 @@
         pendingMenuMouseX = e.clientX;
         pendingMenuMouseY = e.clientY;
         if (fieldButtonTarget) {
-          const rect = fieldButtonTarget.getBoundingClientRect();
+          const { rect, visibleRight } = getFieldButtonLayout(fieldButtonTarget);
           if (rect && rect.width > 0 && rect.height > 0) {
             const y = getIconTopOffset(rect);
-            pendingMenuPosition = { x: rect.right, y };
+            pendingMenuPosition = { x: visibleRight, y };
           } else {
             pendingMenuPosition = null;
           }
@@ -388,8 +503,9 @@
 
   /** Get the base (physical) key for shortcut display/matching, so e.g. Digit2 shows "2" not "@". */
   function getBaseKeyFromKeyEvent(e) {
+    if (!e || typeof e !== 'object') return '';
     const code = e.code;
-    if (code) {
+    if (typeof code === 'string' && code) {
       if (code.startsWith('Digit')) return code.slice(-1);
       if (code.startsWith('Key')) return code.slice(-1).toUpperCase();
       if (code.startsWith('Numpad')) {
@@ -397,17 +513,21 @@
         if (/^\d$/.test(digit)) return digit;
       }
     }
-    if (e.key == null || typeof e.key !== 'string') return '';
-    return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+    const key = e.key;
+    if (key == null || typeof key !== 'string' || key.length === 0) return '';
+    return key.length === 1 ? key.toUpperCase() : key;
   }
 
   function normalizeEventToShortcut(e) {
+    if (!e || typeof e !== 'object') return '';
     const parts = [];
     if (e.ctrlKey) parts.push('Ctrl');
     if (e.shiftKey) parts.push('Shift');
     if (e.altKey) parts.push('Alt');
     if (e.metaKey) parts.push('Meta');
-    parts.push(getBaseKeyFromKeyEvent(e));
+    const baseKey = getBaseKeyFromKeyEvent(e);
+    if (!baseKey) return '';
+    parts.push(baseKey);
     return parts.join('+');
   }
 
@@ -490,6 +610,8 @@
   document.addEventListener(
     'keydown',
     (e) => {
+      if (!e || typeof e !== 'object') return;
+
       if (matchesPanelShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
@@ -531,9 +653,9 @@
         return;
       }
 
-      const rect = el.getBoundingClientRect();
+      const { rect, visibleRight } = getFieldButtonLayout(el);
       const menuY = getIconTopOffset(rect);
-      const position = { x: rect.right, y: menuY };
+      const position = { x: visibleRight, y: menuY };
       try {
         chrome.runtime.sendMessage(
           { type: 'getFloatingMenuSections', pageInfo },
